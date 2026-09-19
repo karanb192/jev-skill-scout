@@ -1,0 +1,18 @@
+{
+  "name": "jev-skill-scout",
+  "version": "0.1.0",
+  "description": "Finds the turns where Claude Code should have loaded one of your skills and did not, judged by TypeSafe's Jev. Ships the audit CLI and the mod that fixes it live.",
+  "type": "module",
+  "bin": { "jev-skill-scout": "bin/cli.mjs" },
+  "files": ["bin", "lib", "hooks", ".claude-plugin", "README.md", "LICENSE"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "audit": "node bin/cli.mjs audit",
+    "test": "node --test tests/lib.test.mjs",
+    "test:mod": "claude plugin test ."
+  },
+  "keywords": ["claude-code", "skills", "jev", "typesafe", "system-one", "audit", "mod", "function-hooks"],
+  "author": { "name": "Karan Bansal", "url": "https://github.com/karanb192" },
+  "license": "MIT",
+  "repository": "github:karanb192/jev-skill-scout"
+}
