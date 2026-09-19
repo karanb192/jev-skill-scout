@@ -151,7 +151,9 @@ async function main() {
           cache[ck] = res;
         } catch (e) {
           failed++;
-          cases.push({ ...base, category: 'error', error: String(e.message ?? e).slice(0, 200) });
+          const error = String(e.message ?? e).slice(0, 200);
+          if (failed <= 5 || failed % 25 === 0) process.stderr.write(`\n  error #${failed}: ${error}\n`);
+          cases.push({ ...base, category: 'error', error });
           continue;
         }
       }
@@ -169,7 +171,10 @@ async function main() {
         stage: res.stage,
       });
       done++;
-      if (done % 50 === 0) process.stderr.write(`  ${done} judged, ${failed} failed, ${Math.round((Date.now() - started) / 1000)} s\r`);
+      if (done % 25 === 0) {
+        process.stderr.write(`  ${done} judged, ${failed} failed, ${Math.round((Date.now() - started) / 1000)} s\n`);
+        await writeFile(cachePath, JSON.stringify(cache));
+      }
     }
   };
   await Promise.all(Array.from({ length: concurrency }, worker));
