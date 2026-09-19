@@ -95,6 +95,7 @@ test('transcripts: turns, loads, slash commands, duplicates and notifications', 
     rec('user', 'user', 'second prompt long enough'),
     rec('user', 'user', 'second prompt long enough'),
     rec('user', 'user', '<command-name>/karan-report</command-name>'),
+    rec('user', 'user', '<command-name>/compact</command-name>'),
     rec('user', 'user', '<task-notification>ignore me</task-notification>'),
     rec('user', 'user', 'sidechain prompt here', { isSidechain: true }),
     rec('user', 'user', 'third prompt long enough'),
@@ -102,7 +103,7 @@ test('transcripts: turns, loads, slash commands, duplicates and notifications', 
   const p = join(dir, 's.jsonl');
   await writeFile(p, lines.join('\n') + '\n');
   const out = [];
-  for await (const t of turns({ path: p, project: 'x', session: 's' })) out.push(t);
+  for await (const t of turns({ path: p, project: 'x', session: 's' }, { isSkill: n => n !== 'compact' })) out.push(t);
   assert.deepEqual(out.map(t => t.text), ['first prompt long enough', 'second prompt long enough', 'third prompt long enough']);
   assert.deepEqual(out[0].loadedNow, ['humanizer']);
   assert.deepEqual(out[1].loadedBefore, ['humanizer']);

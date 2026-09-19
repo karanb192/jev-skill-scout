@@ -12,7 +12,19 @@ Both use the same code in `lib/`. The audit is the mod's brain run offline, so i
 ## What the audit found on my transcripts
 
 <!-- audit:start -->
-Running. Numbers land here when the full pass over 215 sessions finishes.
+216 sessions, 3,410 human prompts, 3,068 judged (342 were under 12 characters). 58 skills in the roster. 5,785 Jev calls, 24.3M input tokens, $1.02, 48 minutes at 8 requests in parallel from India.
+
+| Fit threshold | Turns where Jev saw a skill need | Loaded nothing | Miss rate |
+|---|---|---|---|
+| 0.3 (default, the cookbook's) | 1,605 | 1,163 | 72.5% |
+| 0.5 | 1,108 | 790 | 71.3% |
+| 0.7 | 488 | 344 | 70.5% |
+
+The rate barely moves with the threshold; the count does. Most missed at fit 0.5: karan-report 152, search-conversations 85, cdp-browser-automation 82, oss-contribute 65, humanizer 61, plain-writing 46, reddit-posting 31, blog-review 29.
+
+I then read 37 random misses at fit 0.5 and labelled each one myself (`docs/author-labels-2026-09-19.json`): 21 right, 16 wrong, so about 57% precision. Take the 790 down to roughly 450 real misses across nine weeks of sessions. Right: "copy reply to [name], properly formatted and human looking" (humanizer), "time to post on r/macapps, is our post super ready?" (reddit-posting), "check my email" (cdp-browser-automation). Wrong: "current status?" went to karan-report because that skill's description lists the word status, and Jev reads descriptions literally. Two of the wrong ones were questions that needed no procedure at all.
+
+The other direction exists too. At fit 0.5 the agent loaded a skill Jev did not pick 64 times, and only 51 turns were a clean hit. Jev is a second opinion, not an oracle.
 <!-- audit:end -->
 
 Jev is the judge here, not ground truth. Every row in the report shows the pick, its fit probability and what the turn actually loaded, so you can tick right or wrong on a sample and the page turns your ticks into a precision number.
@@ -38,7 +50,7 @@ Useful flags:
 
 It reads `~/.claude/projects/*/*.jsonl` and every `SKILL.md` under `~/.claude/skills`, `~/.claude/plugins/cache` and `./.claude/skills`. Nothing is written outside the output directory. Judgments are cached, so a second run with new thresholds is free.
 
-Cost: about $0.0004 per judged prompt at the listed Jev price. My 3,159 prompts cost about $1.20.
+Cost: about $0.0003 per judged prompt at the listed Jev price. My 3,068 prompts cost $1.02. Time is the round trip, not the model: about 7 seconds per prompt from India with two calls, so run it with the default 8 in parallel and go make tea.
 
 ### What counts as a miss
 

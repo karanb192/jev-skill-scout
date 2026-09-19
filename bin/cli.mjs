@@ -10,7 +10,7 @@ import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 
 import { readRoster, sameSkill } from '../lib/roster.js';
-import { DEFAULTS, NONE, suggest } from '../lib/scout.js';
+import { DEFAULTS, NONE, decide, suggest } from '../lib/scout.js';
 import { listSessions, turns } from '../lib/transcripts.js';
 import { html, summarize, terminal } from '../lib/report.js';
 
@@ -110,7 +110,8 @@ async function main() {
   if (!sessions.length) { console.error(`No transcripts found under ${projectsDir}.`); process.exit(1); }
 
   const all = [];
-  for (const s of sessions) for await (const t of turns(s)) all.push(t);
+  const isSkill = name => roster.some(r => sameSkill(r.name, name));
+  for (const s of sessions) for await (const t of turns(s, { isSkill })) all.push(t);
   const judgeable = all.filter(t => t.text.length >= DEFAULTS.minPromptChars);
   const rosterChars = roster.reduce((n, s) => n + Math.min(s.description.length, DEFAULTS.descriptionChars) + s.name.length + 4, 0);
   const estTokens = judgeable.reduce((n, t) => n + (rosterChars + Math.min(t.text.length, 4000) + 400) / 4, 0);
@@ -143,7 +144,7 @@ async function main() {
       if (t.text.length < DEFAULTS.minPromptChars) { cases.push({ ...base, category: 'trivial' }); continue; }
       if (judged >= limit) { continue; }
       judged++;
-      const ck = `${id}:${rosterHash}:${options.gateThreshold}:${options.fitsThreshold}:${options.model}`;
+      const ck = `${id}:${rosterHash}:${options.model}`;
       let res = cache[ck];
       if (!res) {
         try {
@@ -157,12 +158,13 @@ async function main() {
           continue;
         }
       }
+      const suggestion = decide(res, options);
       const top = res.rank.ranked.filter(([n]) => n !== NONE).slice(0, 3).map(([n, p]) => `${n} ${p.toFixed(2)}`).join(' · ');
       cases.push({
         ...base,
-        category: categorize(t, res.suggestion),
-        suggestion: res.suggestion,
-        fit: res.suggestion ? res.verify?.fits?.[res.suggestion] : null,
+        category: categorize(t, suggestion),
+        suggestion,
+        fit: suggestion ? res.verify?.fits?.[suggestion] : null,
         gate: res.rank.gate,
         gates: res.rank.gates,
         top,
