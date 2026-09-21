@@ -6,10 +6,10 @@ On my own transcripts, 216 sessions over nine weeks, 72% of the turns that neede
 
 This repo does two things about that.
 
-1. **The audit.** `npx jev-skill-scout audit` replays every prompt in your Claude Code transcripts through [TypeSafe's Jev](https://docs.typesafe.ai/introduction) and counts the turns where a skill should have loaded and did not. One command, one key, one HTML report you can label.
+1. **The audit.** `npx jev-skill-scout audit` replays every prompt in your Claude Code transcripts through [TypeSafe's Jev](https://docs.typesafe.ai/introduction) and counts the turns where a skill should have loaded and did not. Each prompt is judged against the skill list its own session showed the model, which the transcript records. One command, one key, one HTML report you can label.
 2. **The mod.** A Claude Code [function-hook plugin](https://github.com/anthropics/claude-code/tree/main/mods) that runs the same judgment live, before each prompt reaches the model, and attaches one line: `Relevant to this request: frontend-design.` The model still decides. Your skill list does not change, so prompt caching over it still holds.
 
-Both use the same code in `lib/`. The audit is the mod's brain run offline, so its numbers are what the mod would have done on your history.
+Both use the same code in `lib/`. The audit is the mod's brain run offline, so its numbers are what the mod would have done on your history. Once the mod is on, the audit also reads its trace in later transcripts and reports whether the agent followed each suggestion, and the miss rate with the mod against without.
 
 ## What the audit found on my transcripts
 
@@ -86,6 +86,8 @@ Every human prompt is one turn. A turn is a **miss** only when all three hold:
 - The turn loaded no skill: no Skill tool call, no `Launching skill` result, no slash command typed.
 - That skill was not already loaded earlier in the same session. Skills stay in context once loaded, so suggesting one again would be noise.
 
+The roster for each prompt is the one Claude Code listed to the model in that session (transcripts carry a `skill_listing` record at session start and whenever it changes), so a skill you installed last week is not held against prompts from last month. Sessions with no such record fall back to what is installed now. The verify stage reads today's `SKILL.md` body for skills that still exist.
+
 The other buckets are reported too: **hit** (Jev and the turn agree), **already-loaded**, **disagree** (Jev picked one, the turn loaded another), **unsuggested-load** (the turn loaded a skill Jev did not pick), **quiet** (neither), and **trivial** (prompts under 12 characters, skipped without a call). Subagent transcripts and harness notifications are excluded.
 
 ## Install the mod
@@ -105,7 +107,9 @@ Then in `~/.claude/settings.json`:
 
 Or for one session from a checkout: `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude --plugin-dir /path/to/jev-skill-scout`.
 
-Every option (key, thresholds, timeout, model, quiet, on/off) is a plugin setting under `/config`, so there is no extra command to learn. With no key the mod loads and does nothing.
+Every option (key, thresholds, timeout, model, quiet, shadow, on/off) is a plugin setting under `/config`, so there is no extra command to learn. With no key the mod loads and does nothing.
+
+**Shadow mode** judges every prompt and shows the pick in the status line but attaches nothing, so you can watch what it would do before letting it. Turn it on under `/config`, or for one session with `JEV_SKILL_SCOUT_SHADOW=1`.
 
 Per prompt it adds one status line and, from India, about 2 to 3 seconds before the model starts (two round trips to a West Coast API). From the US it is well under a second. Set `timeoutMs` lower if that bothers you; on timeout the turn runs untouched.
 
@@ -115,11 +119,11 @@ Validated on Claude Code 2.1.278:
 
     ❯ ./register.ts hooks: session.start, prompt.submit
     ❯ ./register.ts calls: $.clock.now, $.clock.sleep, $.env.get, $.fs.exists, $.fs.list, $.fs.read, $.http.fetch, $.session.cwd, $.store.get, $.store.set, $.ui.log, $.ui.status
-    ❯ ./register.ts env reads: HOME, TYPESAFE_API_KEY, TYPESAFE_KEY
+    ❯ ./register.ts env reads: HOME, JEV_SKILL_SCOUT_SHADOW, TYPESAFE_API_KEY, TYPESAFE_KEY
 
 Reach L3, network. Sees every prompt you type.
 
-- **Reads:** `SKILL.md` files under your home and project skill directories, and three environment variables.
+- **Reads:** `SKILL.md` files under your home and project skill directories and the enabled plugins' caches, `~/.claude/settings.json` for which plugins are enabled, and four environment variables.
 - **Runs:** nothing. No shell.
 - **Sends:** your prompt text, the skill names and descriptions, and on the second call the first 700 characters of three skills' instructions, to `api.typesafe.ai`. Nothing else leaves the machine.
 - **Persists:** the skill roster in the plugin's own store, refreshed every ten minutes.
@@ -133,7 +137,11 @@ It follows TypeSafe's [skill suggestion cookbook](https://docs.typesafe.ai/cookb
 2. **Verify.** The top three skills are re-read with the opening of their instructions. A second Choice picks among them or rejects all; a Noul per candidate asks whether loading it would change the work. The winner needs its fit above the threshold.
 3. **Attach.** One `<skill_relevance>` block after the prompt, invisible to you, telling the model which skill to load first and to ignore the hint if it does not fit.
 
-Jev returns typed answers with probabilities in one parallel pass, so a 58-skill roster is one request, not 58.
+Jev returns typed answers with probabilities in one parallel pass, so a 58-skill roster is one request, not 58. A Choice takes at most 255 options; a roster past 250 is ranked in parallel chunks, each chunk keeps its top three, and the verify stage settles it with real excerpts.
+
+## Does the agent obey it?
+
+The line the mod attaches is recorded in the transcript, so the audit can see it. For every turn where the mod spoke, the report shows the suggestion and whether the agent loaded that skill, and it splits the miss rate into sessions where the mod was active and sessions where it was not. Run the mod for a few days, run the audit again, and that paragraph fills in with your own before and after. Nothing else in this space measures that on real sessions; TypeSafe's cookbook number below is from a synthetic set on Haiku.
 
 ## Why one line works when the list does not
 
@@ -145,16 +153,17 @@ Claude Code already puts every skill's name and description in context. Three th
 
 ## Limits
 
-- The roster is what is installed now. A skill you installed last week is judged against prompts from last month.
+- Claude Code's bundled skills (code-review, deep-research, simplify and the rest) appear in the transcript listing but not on disk, so the audit can judge them and the mod cannot suggest them.
 - Skills that were compacted out of context still count as already loaded.
 - Jev 1.13 reads literally; a skill with a vague description gets ranked on that vague description. The audit's `disagree` and `unsuggested-load` rows are where to look for descriptions worth rewriting.
 - Precision is yours to measure. Label a sample in the report before quoting the miss rate anywhere.
-- Whether Claude follows the line in live sessions is not measured here yet. The audit says what Jev would have suggested, not what Claude did with it. The cookbook's Haiku number above is the closest evidence; the same measurement inside Claude Code is the next thing to run.
+- The obedience numbers only exist once you have run the mod for a while; a fresh audit reports Jev's opinion of your history, not what Claude did with a suggestion.
 
 ## Related
 
 - [typesafe-mod](https://github.com/BeLazy167/typesafe-mod) ranks skills on `prompt.submit` too, in one request, with the router off by default and a shell scan for the roster.
-- [skill-router](https://github.com/lomeshdutta/skill-router) and [skillranker](https://github.com/Dicklesworthstone/skillranker) pick skills from the shell at session start.
+- [skillranker](https://github.com/Dicklesworthstone/skillranker) is the most complete live picker: a Rust CLI wired in as a classic `UserPromptSubmit` shell hook, with the same two-stage Jev judgment, local feedback records, a TUI, and Cursor and Pi support. Use it if you want a picker across harnesses. This repo is the same judgment as a mod (no process spawn, footprint printed by the validator) plus the audit, which skillranker does not have.
+- [skill-router](https://github.com/lomeshdutta/skill-router) picks skills from the shell at session start.
 - [awesome-claude-code-mods](https://github.com/karanb192/awesome-claude-code-mods) scans every mod on GitHub nightly and prints what each one can reach.
 
 ## License
