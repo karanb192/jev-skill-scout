@@ -8,6 +8,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
+import { Agent, request } from 'node:https';
 
 import { readRoster, sameSkill } from '../lib/roster.js';
 import { DEFAULTS, NONE, decide, suggest } from '../lib/scout.js';
@@ -62,9 +63,21 @@ const nodeFs = {
   exists: async p => { try { await stat(p); return true; } catch { return false; } },
 };
 
-async function fetchImpl(url, init) {
-  const r = await fetch(url, init);
-  return { ok: r.ok, status: r.status, text: await r.text() };
+// HTTP/1.1 on purpose: Node's fetch negotiates h2 with the API and the session
+// wedged the event loop after about 200 requests in every long run, which no
+// timeout can interrupt. One keep-alive agent, one socket per worker.
+const agent = new Agent({ keepAlive: true, maxSockets: 32 });
+function fetchImpl(url, init) {
+  return new Promise((resolve, reject) => {
+    const req = request(url, { method: init.method, headers: init.headers, agent, signal: init.signal }, res => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, text: Buffer.concat(chunks).toString('utf8') }));
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.end(init.body);
+  });
 }
 
 function ask(question) {
