@@ -90,11 +90,11 @@ test('transcripts: turns, loads, slash commands, duplicates and notifications', 
   const rec = (type, role, content, extra = {}) => JSON.stringify({ type, message: { role, content }, uuid: Math.random().toString(36).slice(2), timestamp: '2026-09-19T00:00:00Z', ...extra });
   const lines = [
     rec('user', 'user', 'first prompt long enough'),
-    rec('assistant', 'assistant', [{ type: 'text', text: 'ok' }, { type: 'tool_use', name: 'Skill', input: { skill: 'humanizer' } }]),
-    rec('user', 'user', [{ type: 'tool_result', content: 'Launching skill: humanizer' }]),
+    rec('assistant', 'assistant', [{ type: 'text', text: 'ok' }, { type: 'tool_use', name: 'Skill', input: { skill: 'frontend-design' } }]),
+    rec('user', 'user', [{ type: 'tool_result', content: 'Launching skill: frontend-design' }]),
     rec('user', 'user', 'second prompt long enough'),
     rec('user', 'user', 'second prompt long enough'),
-    rec('user', 'user', '<command-name>/karan-report</command-name>'),
+    rec('user', 'user', '<command-name>/commit-helper</command-name>'),
     rec('user', 'user', '<command-name>/compact</command-name>'),
     rec('user', 'user', '<task-notification>ignore me</task-notification>'),
     rec('user', 'user', 'sidechain prompt here', { isSidechain: true }),
@@ -105,8 +105,8 @@ test('transcripts: turns, loads, slash commands, duplicates and notifications', 
   const out = [];
   for await (const t of turns({ path: p, project: 'x', session: 's' }, { isSkill: n => n !== 'compact' })) out.push(t);
   assert.deepEqual(out.map(t => t.text), ['first prompt long enough', 'second prompt long enough', 'third prompt long enough']);
-  assert.deepEqual(out[0].loadedNow, ['humanizer']);
-  assert.deepEqual(out[1].loadedBefore, ['humanizer']);
-  assert.deepEqual(out[1].loadedNow, ['karan-report']);
-  assert.deepEqual(out[2].loadedBefore.sort(), ['humanizer', 'karan-report']);
+  assert.deepEqual(out[0].loadedNow, ['frontend-design']);
+  assert.deepEqual(out[1].loadedBefore, ['frontend-design']);
+  assert.deepEqual(out[1].loadedNow, ['commit-helper']);
+  assert.deepEqual(out[2].loadedBefore.sort(), ['frontend-design', 'commit-helper']);
 });
