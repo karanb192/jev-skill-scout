@@ -22,9 +22,9 @@ Both use the same code in `lib/`. The audit is the mod's brain run offline, so i
 | 0.5 | 1,108 | 790 | 71.3% |
 | 0.7 | 488 | 344 | 70.5% |
 
-The rate barely moves with the threshold; the count does. Most missed at fit 0.5: karan-report 152, search-conversations 85, cdp-browser-automation 82, oss-contribute 65, humanizer 61, plain-writing 46, reddit-posting 31, blog-review 29.
+The rate barely moves with the threshold; the count does. Most missed at fit 0.5: my report-writing skill 152, a past-session search skill 85, browser automation 82, an open-source contribution checklist 65, a writing-voice skill 61, a plain-writing style guide 46, Reddit posting 31, blog review 29.
 
-I then read 37 random misses at fit 0.5 and labelled each one myself (`docs/author-labels-2026-09-19.json`): 21 right, 16 wrong, so about 57% precision. Take the 790 down to roughly 450 real misses across nine weeks of sessions. Right: "copy reply to [name], properly formatted and human looking" (humanizer), "time to post on r/macapps, is our post super ready?" (reddit-posting), "check my email" (cdp-browser-automation). Wrong: "current status?" went to karan-report because that skill's description lists the word status, and Jev reads descriptions literally. Two of the wrong ones were questions that needed no procedure at all.
+I then read 37 random misses at fit 0.5 and labelled each one myself: 21 right, 16 wrong, so about 57% precision. Take the 790 down to roughly 450 real misses across nine weeks of sessions. Right: "copy this reply, properly formatted and human looking" (the writing-voice skill), "is our post ready to go up?" (Reddit posting), "check my email" (browser automation). Wrong: "current status?" went to the report skill because its description lists the word status, and Jev reads descriptions literally. Two of the wrong ones were questions that needed no procedure at all.
 
 The other direction exists too. At fit 0.5 the agent loaded a skill Jev did not pick 64 times, and only 51 turns were a clean hit. Jev is a second opinion, not an oracle.
 <!-- audit:end -->
@@ -54,11 +54,8 @@ jev-skill-scout audit: 3410 prompts, 58 skills in the roster
 
   Turns where Jev saw a skill need: 1605. Missed by the agent: 1163 (72.5%).
   Most missed skills:
-     160  karan-report
-     155  search-conversations
-     119  cdp-browser-automation
-     118  oss-contribute
-      76  humanizer
+     160  (your skills, by name)
+     ...
 
   5785 Jev calls, 24,267,917 input tokens, about $1.019, 7287 ms per judged prompt on average.
 

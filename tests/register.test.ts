@@ -4,14 +4,14 @@ import type { PromptSubmitInput, SessionStartInput } from 'claude-code'
 const session: SessionStartInput = { surface: 'terminal', isInteractive: true, cwd: '/work' }
 const prompt = (text: string): PromptSubmitInput => ({ text, wait: false, origin: { kind: 'composer' } })
 
-const SKILL = '---\nname: humanizer\ndescription: Scrub outbound text so it reads human.\n---\nRead the taxonomy first.'
+const SKILL = '---\nname: frontend-design\ndescription: Build polished web screens that follow the design system.\n---\nRead the design tokens first.'
 
 function world(on: Parameters<Parameters<typeof test>[1]>[1], fetchBodies: string[], answers: object[]) {
   mock.store(on, {})
   mock.env(on, { HOME: '/h', TYPESAFE_API_KEY: 'k' })
   on('session.cwd', () => ({ value: '/work' }))
-  on('fs.list', ($, e) => ({ value: e.path === '/h/.claude/skills' ? [{ name: 'humanizer', kind: 'dir', size: 0, isLink: false }] : [] }))
-  on('fs.exists', ($, e) => ({ value: e.path === '/h/.claude/skills/humanizer/SKILL.md' }))
+  on('fs.list', ($, e) => ({ value: e.path === '/h/.claude/skills' ? [{ name: 'frontend-design', kind: 'dir', size: 0, isLink: false }] : [] }))
+  on('fs.exists', ($, e) => ({ value: e.path === '/h/.claude/skills/frontend-design/SKILL.md' }))
   on('fs.read', () => ({ value: SKILL }))
   mock.clock(on)
   on('ui.log', () => ({ value: undefined }))
@@ -24,9 +24,9 @@ function world(on: Parameters<Parameters<typeof test>[1]>[1], fetchBodies: strin
   on('session.start', ($, e) => ({ cwd: e.cwd }))
 }
 
-const rankYes = { answers: { which: { choice: 'humanizer', probabilities: { humanizer: 0.8, __none__: 0.2 }, confidence: 0.6 }, gate_acts: { noul: 0.9 }, gate_procedure: { noul: 0.9 }, gate_prose: { noul: 0.1 } }, usage: {} }
-const verifyYes = { answers: { which: { choice: 'humanizer', probabilities: { humanizer: 0.9 } }, fits_0: { noul: 0.8 } }, usage: {} }
-const rankNo = { answers: { which: { choice: '__none__', probabilities: { humanizer: 0.2, __none__: 0.8 } }, gate_acts: { noul: 0.1 }, gate_procedure: { noul: 0.1 }, gate_prose: { noul: 0.9 } }, usage: {} }
+const rankYes = { answers: { which: { choice: 'frontend-design', probabilities: { 'frontend-design': 0.8, __none__: 0.2 }, confidence: 0.6 }, gate_acts: { noul: 0.9 }, gate_procedure: { noul: 0.9 }, gate_prose: { noul: 0.1 } }, usage: {} }
+const verifyYes = { answers: { which: { choice: 'frontend-design', probabilities: { 'frontend-design': 0.9 } }, fits_0: { noul: 0.8 } }, usage: {} }
+const rankNo = { answers: { which: { choice: '__none__', probabilities: { 'frontend-design': 0.2, __none__: 0.8 } }, gate_acts: { noul: 0.1 }, gate_procedure: { noul: 0.1 }, gate_prose: { noul: 0.9 } }, usage: {} }
 
 describe('jev-skill-scout', () => {
   test('attaches one context line naming the skill Jev confirmed', async ($, on) => {
@@ -39,8 +39,8 @@ describe('jev-skill-scout', () => {
     await $.prompt.submit(prompt('make this reddit reply sound like me'))
 
     expect(bodies.length).toBe(2)
-    expect(JSON.parse(bodies[0]!).questions.which.criteria).toHaveProperty('humanizer')
-    expect(entered!.context?.[0]).toContain('Relevant to this request: humanizer')
+    expect(JSON.parse(bodies[0]!).questions.which.criteria).toHaveProperty('frontend-design')
+    expect(entered!.context?.[0]).toContain('Relevant to this request: frontend-design')
   })
 
   test('leaves the prompt alone when the gate says no skill is needed', async ($, on) => {
@@ -72,7 +72,7 @@ describe('jev-skill-scout', () => {
     mock.store(on, {})
     mock.env(on, { HOME: '/h', TYPESAFE_API_KEY: 'k' })
     on('session.cwd', () => ({ value: '/work' }))
-    on('fs.list', () => ({ value: [{ name: 'humanizer', kind: 'dir', size: 0, isLink: false }] }))
+    on('fs.list', () => ({ value: [{ name: 'frontend-design', kind: 'dir', size: 0, isLink: false }] }))
     on('fs.exists', () => ({ value: true }))
     on('fs.read', () => ({ value: SKILL }))
     mock.clock(on)
