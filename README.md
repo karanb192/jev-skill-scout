@@ -2,6 +2,8 @@
 
 Claude Code picks skills on its own, from a list of one-line descriptions that sits in its context next to everything else. Sometimes it does not pick. You find out later: the new screen ignores the design system you wrote a skill for, the endpoint ships with no tests even though your testing skill asks for them, the commit message skips the format you set. Every one of those skills was installed the whole time.
 
+On my own transcripts, 216 sessions over nine weeks, 72% of the turns that needed a skill loaded none. When I checked a sample by hand, about 57% of those held up. Numbers and method below.
+
 This repo does two things about that.
 
 1. **The audit.** `npx jev-skill-scout audit` replays every prompt in your Claude Code transcripts through [TypeSafe's Jev](https://docs.typesafe.ai/introduction) and counts the turns where a skill should have loaded and did not. One command, one key, one HTML report you can label.
@@ -34,6 +36,33 @@ Jev is the judge here, not ground truth. Every row in the report shows the pick,
 ```sh
 export TYPESAFE_API_KEY=...        # https://console.typesafe.ai/settings/keys
 npx jev-skill-scout audit          # counts prompts, shows the cost, asks before spending
+```
+
+What comes back, from my run:
+
+```
+jev-skill-scout audit: 3410 prompts, 58 skills in the roster
+
+    1163  miss               Jev picked a skill; the turn loaded none, and it was not already loaded
+      54  hit                Jev picked the skill the turn loaded
+     327  already-loaded     Jev picked a skill that an earlier turn had loaded
+      61  disagree           Jev picked one skill; the turn loaded a different one
+      41  unsuggested-load   The turn loaded a skill; Jev picked none
+    1422  quiet              Neither picked a skill
+     342  trivial            Too short to judge; skipped without a call
+       0  error              The request failed
+
+  Turns where Jev saw a skill need: 1605. Missed by the agent: 1163 (72.5%).
+  Most missed skills:
+     160  karan-report
+     155  search-conversations
+     119  cdp-browser-automation
+     118  oss-contribute
+      76  humanizer
+
+  5785 Jev calls, 24,267,917 input tokens, about $1.019, 7287 ms per judged prompt on average.
+
+  Report: ./skill-audit/report.html
 ```
 
 Useful flags:
@@ -109,12 +138,21 @@ It follows TypeSafe's [skill suggestion cookbook](https://docs.typesafe.ai/cookb
 
 Jev returns typed answers with probabilities in one parallel pass, so a 58-skill roster is one request, not 58.
 
+## Why one line works when the list does not
+
+Claude Code already puts every skill's name and description in context. Three things differ:
+
+- **Menu vs verdict.** The default is a 58-item menu Claude has to match against your prompt on the side, while it plans the answer. The mod hands it a decision: load this one. Following an instruction is a far easier task for a model than noticing a match.
+- **Where it sits.** The list lives in the static prefix, tens of thousands of tokens above your prompt. The line is attached to the prompt itself, the last thing Claude reads before it starts.
+- **Who decided.** The list is judged on descriptions alone. The pick here was made after re-reading the skills' actual instructions, and Claude is told to drop it if it does not fit.
+
 ## Limits
 
 - The roster is what is installed now. A skill you installed last week is judged against prompts from last month.
 - Skills that were compacted out of context still count as already loaded.
 - Jev 1.13 reads literally; a skill with a vague description gets ranked on that vague description. The audit's `disagree` and `unsuggested-load` rows are where to look for descriptions worth rewriting.
 - Precision is yours to measure. Label a sample in the report before quoting the miss rate anywhere.
+- Whether Claude follows the line in live sessions is not measured here yet. The audit says what Jev would have suggested, not what Claude did with it. The cookbook's Haiku number above is the closest evidence; the same measurement inside Claude Code is the next thing to run.
 
 ## Related
 
