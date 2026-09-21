@@ -15,18 +15,23 @@ test('frontmatter: folded description joins into one line', () => {
   assert.match(body, /^# Body/);
 });
 
-test('roster: reads user, project and newest plugin version, dedupes by name', async () => {
+test('roster: reads user, project and newest enabled plugin version, dedupes by name', async () => {
   const files = {
     '/h/.claude/skills/a/SKILL.md': '---\nname: a\ndescription: does a\n---\nA body',
     '/h/.claude/skills/nodesc/SKILL.md': '---\nname: nodesc\n---\n',
     '/w/.claude/skills/a/SKILL.md': '---\nname: a\ndescription: project a\n---\n',
     '/h/.claude/plugins/cache/m/p/1.9.0/skills/s/SKILL.md': '---\nname: s\ndescription: old\n---\n',
     '/h/.claude/plugins/cache/m/p/1.10.0/skills/s/SKILL.md': '---\nname: s\ndescription: new\n---\n',
+    '/h/.claude/plugins/cache/m/q/1.0.0/skills/t/SKILL.md': '---\nname: t\ndescription: disabled plugin\n---\n',
+    '/h/.claude/plugins/cache/m/r/1.0.0/skills/u/SKILL.md': '---\nname: u\ndescription: never enabled\n---\n',
+    '/h/.claude/settings.json': JSON.stringify({ enabledPlugins: { 'p@m': true, 'q@m': false } }),
   };
   const dirs = {
     '/w/.claude/skills': ['a'], '/h/.claude/skills': ['a', 'nodesc'], '/h/.claude/plugins/cache': ['m'],
-    '/h/.claude/plugins/cache/m': ['p'], '/h/.claude/plugins/cache/m/p': ['1.9.0', '1.10.0'],
+    '/h/.claude/plugins/cache/m': ['p', 'q', 'r'], '/h/.claude/plugins/cache/m/p': ['1.9.0', '1.10.0'],
+    '/h/.claude/plugins/cache/m/q': ['1.0.0'], '/h/.claude/plugins/cache/m/r': ['1.0.0'],
     '/h/.claude/plugins/cache/m/p/1.10.0/skills': ['s'], '/h/.claude/plugins/cache/m/p/1.9.0/skills': ['s'],
+    '/h/.claude/plugins/cache/m/q/1.0.0/skills': ['t'], '/h/.claude/plugins/cache/m/r/1.0.0/skills': ['u'],
   };
   const fs = {
     list: async p => (dirs[p] ?? []).map(name => ({ name, kind: 'dir' })),

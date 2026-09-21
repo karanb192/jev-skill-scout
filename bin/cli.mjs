@@ -135,7 +135,7 @@ async function main() {
   const estCost = (estTokens * 1.6) / 1e6 * 0.042; // the second call runs on some turns
 
   console.error(`${sessions.length} sessions, ${all.length} human prompts, ${judgeable.length} long enough to judge, ${roster.length} skills.`);
-  console.error(`Estimated ${Math.round(estTokens).toLocaleString()} input tokens for call 1, about $${estCost.toFixed(2)} in all.`);
+  console.error(`Estimated ${Math.round(estTokens).toLocaleString('en-US')} input tokens for call 1, about $${estCost.toFixed(2)} in all.`);
   if (args['dry-run']) return;
   if (!key) { console.error('No TypeSafe key. Set TYPESAFE_API_KEY or pass --key. Keys: https://console.typesafe.ai/settings/keys'); process.exit(1); }
   if (!args.yes) {
