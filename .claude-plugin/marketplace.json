@@ -1,0 +1,7 @@
+{
+  "name": "jev-skill-scout",
+  "owner": { "name": "Karan Bansal", "url": "https://github.com/karanb192" },
+  "plugins": [
+    { "name": "jev-skill-scout", "source": "./", "description": "Jev-ranked skill suggestion for every prompt, plus the audit that measures the misses." }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "name": "jev-skill-scout",
+  "version": "0.1.0",
+  "description": "Before each prompt reaches the model, TypeSafe's Jev ranks your installed skills against it and attaches one line naming the skill to load. Sends the prompt text to api.typesafe.ai. Needs function hooks (early access).",
+  "author": { "name": "Karan Bansal", "url": "https://github.com/karanb192" },
+  "homepage": "https://github.com/karanb192/jev-skill-scout",
+  "license": "MIT",
+  "keywords": ["mod", "function-hooks", "skills", "jev", "typesafe"],
+  "userConfig": {
+    "apiKey": {
+      "type": "string",
+      "title": "TypeSafe API key",
+      "description": "Leave unset to use TYPESAFE_API_KEY or TYPESAFE_KEY from the environment.",
+      "sensitive": true
+    },
+    "enabled": {
+      "type": "boolean",
+      "title": "Enabled",
+      "description": "Turn the suggestion off without uninstalling.",
+      "default": true
+    },
+    "gateThreshold": {
+      "type": "number",
+      "title": "Gate threshold",
+      "description": "Mean of the three gate probabilities below which no skill is suggested.",
+      "default": 0.3
+    },
+    "fitsThreshold": {
+      "type": "number",
+      "title": "Fit threshold",
+      "description": "The winner's fit probability below which nothing is attached.",
+      "default": 0.3
+    },
+    "timeoutMs": {
+      "type": "number",
+      "title": "Timeout (ms)",
+      "description": "Give up and leave the turn alone after this long.",
+      "default": 4000
+    },
+    "model": {
+      "type": "string",
+      "title": "Jev model",
+      "description": "TypeSafe model name.",
+      "default": "jev-latest"
+    },
+    "quiet": {
+      "type": "boolean",
+      "title": "Quiet",
+      "description": "Hide the status line with the pick and the milliseconds.",
+      "default": false
+    }
+  }
+}
