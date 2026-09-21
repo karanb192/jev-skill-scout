@@ -24,9 +24,9 @@ function world(on: Parameters<Parameters<typeof test>[1]>[1], fetchBodies: strin
   on('session.start', ($, e) => ({ cwd: e.cwd }))
 }
 
-const rankYes = { answers: { which: { choice: 'frontend-design', probabilities: { frontend-design: 0.8, __none__: 0.2 }, confidence: 0.6 }, gate_acts: { noul: 0.9 }, gate_procedure: { noul: 0.9 }, gate_prose: { noul: 0.1 } }, usage: {} }
-const verifyYes = { answers: { which: { choice: 'frontend-design', probabilities: { frontend-design: 0.9 } }, fits_0: { noul: 0.8 } }, usage: {} }
-const rankNo = { answers: { which: { choice: '__none__', probabilities: { frontend-design: 0.2, __none__: 0.8 } }, gate_acts: { noul: 0.1 }, gate_procedure: { noul: 0.1 }, gate_prose: { noul: 0.9 } }, usage: {} }
+const rankYes = { answers: { which: { choice: 'frontend-design', probabilities: { 'frontend-design': 0.8, __none__: 0.2 }, confidence: 0.6 }, gate_acts: { noul: 0.9 }, gate_procedure: { noul: 0.9 }, gate_prose: { noul: 0.1 } }, usage: {} }
+const verifyYes = { answers: { which: { choice: 'frontend-design', probabilities: { 'frontend-design': 0.9 } }, fits_0: { noul: 0.8 } }, usage: {} }
+const rankNo = { answers: { which: { choice: '__none__', probabilities: { 'frontend-design': 0.2, __none__: 0.8 } }, gate_acts: { noul: 0.1 }, gate_procedure: { noul: 0.1 }, gate_prose: { noul: 0.9 } }, usage: {} }
 
 describe('jev-skill-scout', () => {
   test('attaches one context line naming the skill Jev confirmed', async ($, on) => {

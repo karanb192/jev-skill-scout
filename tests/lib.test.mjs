@@ -108,5 +108,5 @@ test('transcripts: turns, loads, slash commands, duplicates and notifications', 
   assert.deepEqual(out[0].loadedNow, ['frontend-design']);
   assert.deepEqual(out[1].loadedBefore, ['frontend-design']);
   assert.deepEqual(out[1].loadedNow, ['commit-helper']);
-  assert.deepEqual(out[2].loadedBefore.sort(), ['frontend-design', 'commit-helper']);
+  assert.deepEqual(out[2].loadedBefore.sort(), ['commit-helper', 'frontend-design']);
 });

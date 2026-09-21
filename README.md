@@ -22,7 +22,7 @@ Both use the same code in `lib/`. The audit is the mod's brain run offline, so i
 | 0.5 | 1,108 | 790 | 71.3% |
 | 0.7 | 488 | 344 | 70.5% |
 
-The rate barely moves with the threshold; the count does. Most missed at fit 0.5: my report-writing skill 152, a past-session search skill 85, browser automation 82, an open-source contribution checklist 65, a writing-voice skill 61, a plain-writing style 46, Reddit posting 31, blog review 29.
+The rate barely moves with the threshold; the count does. Most missed at fit 0.5: my report-writing skill 152, a past-session search skill 85, browser automation 82, an open-source contribution checklist 65, a writing-voice skill 61, a plain-writing style guide 46, Reddit posting 31, blog review 29.
 
 I then read 37 random misses at fit 0.5 and labelled each one myself: 21 right, 16 wrong, so about 57% precision. Take the 790 down to roughly 450 real misses across nine weeks of sessions. Right: "copy this reply, properly formatted and human looking" (the writing-voice skill), "is our post ready to go up?" (Reddit posting), "check my email" (browser automation). Wrong: "current status?" went to the report skill because its description lists the word status, and Jev reads descriptions literally. Two of the wrong ones were questions that needed no procedure at all.
 
