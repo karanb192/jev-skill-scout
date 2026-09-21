@@ -2,7 +2,7 @@
 
 Claude Code picks skills on its own, from a list of one-line descriptions that sits in its context next to everything else. Sometimes it does not pick. You find out later: the new screen ignores the design system you wrote a skill for, the endpoint ships with no tests even though your testing skill asks for them, the commit message skips the format you set. Every one of those skills was installed the whole time.
 
-On my own transcripts, 216 sessions over nine weeks, 72% of the turns that needed a skill loaded none. When I checked a sample by hand, about 57% of those held up. Numbers and method below.
+On my own transcripts, 221 sessions over nine weeks, 73% of the turns that needed a skill loaded none. When I checked a sample by hand, about half of those held up. Numbers and method below.
 
 This repo does two things about that.
 
@@ -14,19 +14,19 @@ Both use the same code in `lib/`. The audit is the mod's brain run offline, so i
 ## What the audit found on my transcripts
 
 <!-- audit:start -->
-216 sessions, 3,410 human prompts, 3,068 judged (342 were under 12 characters). 58 skills in the roster. 5,785 Jev calls, 24.3M input tokens, $1.02, 48 minutes at 8 requests in parallel from India.
+221 sessions, 3,431 human prompts, 3,083 judged (348 were under 12 characters). 3,411 of the prompts were judged against the skill list their own session showed the model (56 to 77 skills, depending on the day). 5,817 Jev calls, 21.4M input tokens, $0.90, 3 minutes 22 seconds at 12 requests in parallel from India.
 
 | Fit threshold | Turns where Jev saw a skill need | Loaded nothing | Miss rate |
 |---|---|---|---|
-| 0.3 (default, the cookbook's) | 1,605 | 1,163 | 72.5% |
-| 0.5 | 1,108 | 790 | 71.3% |
-| 0.7 | 488 | 344 | 70.5% |
+| 0.3 (default, the cookbook's) | 1,551 | 1,129 | 72.8% |
+| 0.5 | 1,021 | 702 | 68.8% |
+| 0.7 | 394 | 247 | 62.7% |
 
-The rate barely moves with the threshold; the count does. Most missed at fit 0.5: my report-writing skill 152, a past-session search skill 85, browser automation 82, an open-source contribution checklist 65, a writing-voice skill 61, a plain-writing style guide 46, Reddit posting 31, blog review 29.
+The rate moves a little with the threshold; the count moves a lot. Most missed at fit 0.5: a past-session search skill 86, Claude Code's own `code-review` 46, an open-source contribution checklist 44, the bundled `update-config` 42, my report-writing skill 38, browser automation 37. Two of the top six ship with Claude Code itself.
 
-I then read 37 random misses at fit 0.5 and labelled each one myself: 21 right, 16 wrong, so about 57% precision. Take the 790 down to roughly 450 real misses across nine weeks of sessions. Right: "copy this reply, properly formatted and human looking" (the writing-voice skill), "is our post ready to go up?" (Reddit posting), "check my email" (browser automation). Wrong: "current status?" went to the report skill because its description lists the word status, and Jev reads descriptions literally. Two of the wrong ones were questions that needed no procedure at all.
+I then read 30 random misses at fit 0.5 and labelled each one myself: 15 right, 15 wrong, so about 50% precision (an earlier sample of 37 on a disk-only roster came out at 57%). Take the 702 down to roughly 350 real misses across nine weeks. Right: "do you remember that I applied to [a company], any details?" (past-session search), "can you check why CI was failing on that PR?" (the contribution checklist), "is the PR all solid to merge, are we sure?" (`code-review`). Wrong: "allowed the key.." went to `update-config`, and "which one is your recommendation? top 3" went to a design skill because its description promises options. Jev reads descriptions literally, so the wrong half is mostly descriptions that overclaim; the doctor below is for those.
 
-The other direction exists too. At fit 0.5 the agent loaded a skill Jev did not pick 64 times, and only 51 turns were a clean hit. Jev is a second opinion, not an oracle.
+The other direction exists too. At fit 0.3 the agent loaded a skill Jev did not pick 43 times, and only 60 turns were a clean hit. Jev is a second opinion, not an oracle.
 <!-- audit:end -->
 
 Jev is the judge here, not ground truth. Every row in the report shows the pick, its fit probability and what the turn actually loaded, so you can tick right or wrong on a sample and the page turns your ticks into a precision number.
@@ -41,23 +41,24 @@ npx jev-skill-scout audit          # counts prompts, shows the cost, asks before
 What comes back, from my run:
 
 ```
-jev-skill-scout audit: 3410 prompts, 58 skills in the roster
+jev-skill-scout audit: 3431 prompts, 56 skills in the roster
 
-    1163  miss               Jev picked a skill; the turn loaded none, and it was not already loaded
-      54  hit                Jev picked the skill the turn loaded
-     327  already-loaded     Jev picked a skill that an earlier turn had loaded
-      61  disagree           Jev picked one skill; the turn loaded a different one
-      41  unsuggested-load   The turn loaded a skill; Jev picked none
-    1422  quiet              Neither picked a skill
-     342  trivial            Too short to judge; skipped without a call
+    1129  miss               Jev picked a skill; the turn loaded none, and it was not already loaded
+      60  hit                Jev picked the skill the turn loaded
+     302  already-loaded     Jev picked a skill that an earlier turn had loaded
+      60  disagree           Jev picked one skill; the turn loaded a different one
+      43  unsuggested-load   The turn loaded a skill; Jev picked none
+    1489  quiet              Neither picked a skill
+     348  trivial            Too short to judge; skipped without a call
        0  error              The request failed
 
-  Turns where Jev saw a skill need: 1605. Missed by the agent: 1163 (72.5%).
+  Turns where Jev saw a skill need: 1551. Missed by the agent: 1129 (72.8%).
   Most missed skills:
-     160  (your skills, by name)
+     165  (your skills, by name)
      ...
 
-  5785 Jev calls, 24,267,917 input tokens, about $1.019, 7287 ms per judged prompt on average.
+  3411 of 3431 prompts were judged against the skill list their own session showed the model; the rest against what is installed now.
+  5817 Jev calls, 21,407,337 input tokens, about $0.899, 1392 ms per judged prompt on average.
 
   Report: ./skill-audit/report.html
 ```
@@ -76,7 +77,7 @@ Useful flags:
 
 It reads `~/.claude/projects/*/*.jsonl` and every `SKILL.md` under `~/.claude/skills`, `~/.claude/plugins/cache` and `./.claude/skills`. Nothing is written outside the output directory. Judgments are cached, so a second run with new thresholds is free.
 
-Cost: about $0.0003 per judged prompt at the listed Jev price. My 3,068 prompts cost $1.02. Time is the round trip, not the model: about 7 seconds per prompt from India with two calls, so run it with the default 8 in parallel and go make tea.
+Cost: about $0.0003 per judged prompt at the listed Jev price. My 3,083 prompts cost $0.90 and took under four minutes at 12 in parallel. The median prompt is 850 ms for both calls from India over one kept-alive HTTP/1.1 connection. (An earlier run averaged 7 seconds and wedged twice at 200 prompts: Node's `fetch` negotiates HTTP/2 with the API and the session spins the event loop, so the CLI now uses `node:https` directly.)
 
 ### What counts as a miss
 
