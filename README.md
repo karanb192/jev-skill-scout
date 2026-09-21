@@ -1,11 +1,11 @@
 # jev-skill-scout
 
-Claude Code picks skills on its own, from a list of one-line descriptions that sits in its context next to everything else. Sometimes it does not pick. You find out later, when the Slack reply went out in the wrong format or the blog draft never got the review pass, and the skill that would have caught it was installed the whole time.
+Claude Code picks skills on its own, from a list of one-line descriptions that sits in its context next to everything else. Sometimes it does not pick. You find out later: the new screen ignores the design system you wrote a skill for, the endpoint ships with no tests even though your testing skill asks for them, the commit message skips the format you set. Every one of those skills was installed the whole time.
 
 This repo does two things about that.
 
 1. **The audit.** `npx jev-skill-scout audit` replays every prompt in your Claude Code transcripts through [TypeSafe's Jev](https://docs.typesafe.ai/introduction) and counts the turns where a skill should have loaded and did not. One command, one key, one HTML report you can label.
-2. **The mod.** A Claude Code [function-hook plugin](https://github.com/anthropics/claude-code/tree/main/mods) that runs the same judgment live, before each prompt reaches the model, and attaches one line: `Relevant to this request: humanizer.` The model still decides. Your skill list does not change, so prompt caching over it still holds.
+2. **The mod.** A Claude Code [function-hook plugin](https://github.com/anthropics/claude-code/tree/main/mods) that runs the same judgment live, before each prompt reaches the model, and attaches one line: `Relevant to this request: frontend-design.` The model still decides. Your skill list does not change, so prompt caching over it still holds.
 
 Both use the same code in `lib/`. The audit is the mod's brain run offline, so its numbers are what the mod would have done on your history.
 
