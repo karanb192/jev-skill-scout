@@ -4,8 +4,8 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { parseFrontmatter, readRoster, sameSkill } from '../lib/roster.js';
-import { NONE, buildRank, buildVerify, readRank, suggest } from '../lib/scout.js';
+import { parseFrontmatter, parseListing, readRoster, sameSkill } from '../lib/roster.js';
+import { CHUNK, NONE, buildRank, buildVerify, readRank, suggest } from '../lib/scout.js';
 import { turns } from '../lib/transcripts.js';
 
 test('frontmatter: folded description joins into one line', () => {
@@ -83,6 +83,57 @@ test('verify request exposes instructions, not just names', () => {
   const body = buildVerify([{ name: 'a', description: 'd', excerpt: 'Step one: read the file.' }], 'req', '');
   assert.match(body.questions.which.criteria.a, /Step one/);
   assert.equal(body.questions.fits_0.type, 'noul');
+});
+
+test('listing: wrapped descriptions and plugin names parse back into a roster', () => {
+  const r = parseListing('- a: does a\n  and more of a\n- p:s: plugin skill\n- b: does b');
+  assert.deepEqual(r, [{ name: 'a', description: 'does a and more of a' }, { name: 'p:s', description: 'plugin skill' }, { name: 'b', description: 'does b' }]);
+});
+
+test('suggest: a roster past the Choice cap is ranked in chunks, then verified once', async () => {
+  const roster = Array.from({ length: CHUNK + 5 }, (_, i) => ({ name: `s${i}`, description: `skill ${i}`, excerpt: 'x' }));
+  const sizes = [];
+  const fetchImpl = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (body.state.candidates) {
+      return { ok: true, status: 200, text: JSON.stringify({ answers: { which: { choice: body.state.candidates[0].name, probabilities: {} }, fits_0: { noul: 0.9 } }, usage: {} }) };
+    }
+    const names = Object.keys(body.questions.which.criteria);
+    sizes.push(names.length);
+    const first = names[0];
+    return { ok: true, status: 200, text: JSON.stringify({ answers: { which: { choice: first, probabilities: { [first]: 0.7, [NONE]: 0.3 } }, gate_acts: { noul: 0.9 }, gate_procedure: { noul: 0.9 }, gate_prose: { noul: 0.1 } }, usage: { input_tokens: 5 } }) };
+  };
+  const r = await suggest({ fetchImpl, key: 'k', roster, request: 'a request long enough to judge' });
+  assert.deepEqual(sizes, [CHUNK + 1, 6], 'two rank calls, each with its own none option');
+  assert.equal(r.usage.calls, 3);
+  assert.equal(r.usage.input, 10);
+  assert.ok(['s0', `s${CHUNK}`].includes(r.suggestion));
+});
+
+test('transcripts: the session roster and the mod line come from attachment records', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'scout-'));
+  const rec = o => JSON.stringify({ uuid: Math.random().toString(36).slice(2), timestamp: '2026-09-21T00:00:00Z', ...o });
+  const lines = [
+    rec({ type: 'attachment', attachment: { type: 'skill_listing', isInitial: true, skillCount: 2, names: ['a', 'b'], content: '- a: does a\n- b: does b' } }),
+    rec({ type: 'user', message: { role: 'user', content: 'first prompt long enough' } }),
+    rec({ type: 'attachment', attachment: { type: 'hook_additional_context', content: ['<skill_relevance>\nRelevant to this request: a. Load it with the Skill tool before answering. Ignore this if it does not fit what the user actually asked for.\n</skill_relevance>'] } }),
+    rec({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Skill', input: { skill: 'a' } }] } }),
+    rec({ type: 'attachment', attachment: { type: 'skill_listing', isInitial: false, skillCount: 1, names: ['c'], content: '- c: does c' } }),
+    rec({ type: 'user', message: { role: 'user', content: 'second prompt long enough <skill_relevance>\nRelevant to this request: c.\n</skill_relevance>' } }),
+    rec({ type: 'user', message: { role: 'user', content: '<command-name>/c</command-name>' } }),
+  ];
+  const p = join(dir, 's.jsonl');
+  await writeFile(p, lines.join('\n') + '\n');
+  const out = [];
+  for await (const t of turns({ path: p, project: 'x', session: 's' }, { isSkill: () => false })) out.push(t);
+  assert.equal(out.length, 2);
+  assert.deepEqual(out[0].roster.map(s => s.name), ['a', 'b']);
+  assert.equal(out[0].suggested, 'a');
+  assert.deepEqual(out[0].loadedNow, ['a']);
+  assert.deepEqual(out[1].roster.map(s => s.name), ['a', 'b', 'c']);
+  assert.equal(out[1].suggested, 'c');
+  assert.equal(out[1].text, 'second prompt long enough', 'the mod line is not part of the prompt');
+  assert.deepEqual(out[1].loadedNow, ['c'], 'a slash command counts as a load when the session listing knows the skill');
 });
 
 test('transcripts: turns, loads, slash commands, duplicates and notifications', async () => {
