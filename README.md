@@ -139,6 +139,22 @@ It follows TypeSafe's [skill suggestion cookbook](https://docs.typesafe.ai/cookb
 
 Jev returns typed answers with probabilities in one parallel pass, so a 58-skill roster is one request, not 58. A Choice takes at most 255 options; a roster past 250 is ranked in parallel chunks, each chunk keeps its top three, and the verify stage settles it with real excerpts.
 
+## Fix the description, not the symptom
+
+Most misses trace back to a description that does not say when the skill applies. `npx jev-skill-scout doctor <skill>` pulls the real prompts from your last audit that involve that skill, in three groups: the ones that loaded it, the ones where Jev picked it and nothing loaded, and the ones where the turn chose a different skill. It scores the current description against all of them in one request, and any rewrite you pass with `--desc "..."` or `--desc-file` beside it:
+
+```
+jev-skill-scout doctor: frontend-design
+  9 prompts loaded it (9 scored), 12 where Jev picked it and nothing loaded (12 scored), 1 where the turn loaded another skill (1 scored).
+
+  description     loaded it  Jev missed  suspect   what you want
+                       high        high      low
+  current               54%         72%      74%   2,323 tokens, 1064 ms
+  rewrite               61%         68%      71%   2,333 tokens, 399 ms
+```
+
+It then lists the prompts the current description matches least among those that really used the skill, and the ones it still matches among those that used another. Anthropic's `/skill-doctor` tests a description against prompts it invents; this tests it against yours, in about a second, for a fraction of a cent.
+
 ## Does the agent obey it?
 
 The line the mod attaches is recorded in the transcript, so the audit can see it. For every turn where the mod spoke, the report shows the suggestion and whether the agent loaded that skill, and it splits the miss rate into sessions where the mod was active and sessions where it was not. Run the mod for a few days, run the audit again, and that paragraph fills in with your own before and after. Nothing else in this space measures that on real sessions; TypeSafe's cookbook number below is from a synthetic set on Haiku.

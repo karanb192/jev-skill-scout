@@ -13,6 +13,7 @@ import { readRoster, sameSkill } from '../lib/roster.js';
 import { DEFAULTS, NONE, decide, suggest } from '../lib/scout.js';
 import { listSessions, turns } from '../lib/transcripts.js';
 import { html, summarize, terminal } from '../lib/report.js';
+import { gather, render, score } from '../lib/doctor.js';
 
 const HELP = `jev-skill-scout audit [options]
 
@@ -34,7 +35,14 @@ and reports the turns where a skill should have loaded and did not.
   --no-cache         ignore cached judgments from earlier runs
 
 jev-skill-scout roster       list the skills the audit would rank
+
+jev-skill-scout doctor <skill> [--desc "a rewritten description"] [--desc-file path]
+  Scores the skill's current description, and any rewrite you pass, against
+  the real prompts in the last audit: the ones that loaded it, the ones Jev
+  missed, and the ones where the turn chose another skill. One request each.
+  --out <dir>   the audit directory holding cases.json (default ./skill-audit)
 `;
+
 
 function parseArgs(argv) {
   const o = { _: [] };
@@ -77,10 +85,28 @@ function categorize(t, sug) {
   return loadedNow.length ? 'unsuggested-load' : 'quiet';
 }
 
+async function doctor(args, { key, roster, outDir }) {
+  const skill = args._[1];
+  if (!skill) { console.error('Which skill? jev-skill-scout doctor <skill>'); process.exit(1); }
+  const current = roster.find(r => sameSkill(r.name, skill));
+  if (!current) { console.error(`No installed skill named ${skill}. Try: jev-skill-scout roster`); process.exit(1); }
+  const casesPath = join(outDir, 'cases.json');
+  if (!existsSync(casesPath)) { console.error(`No audit at ${casesPath}. Run: jev-skill-scout audit`); process.exit(1); }
+  if (!key) { console.error('No TypeSafe key. Set TYPESAFE_API_KEY or pass --key.'); process.exit(1); }
+  const { cases } = JSON.parse(await readFile(casesPath, 'utf8'));
+  const groups = gather(cases, current.name);
+  if (!groups.loaded.length && !groups.missed.length && !groups.suspect.length) { console.error(`The audit has no prompts involving ${current.name}.`); process.exit(1); }
+  const descriptions = [['current', current.description]];
+  if (args.desc) descriptions.push(['rewrite', String(args.desc)]);
+  if (args['desc-file']) descriptions.push(['rewrite', (await readFile(resolve(args['desc-file']), 'utf8')).trim()]);
+  const scored = await score({ fetchImpl, key, descriptions, groups, model: args.model ?? DEFAULTS.model });
+  process.stdout.write(render(current.name, groups, scored) + '\n\n');
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const cmd = args._[0];
-  if (args.help || !cmd || !['audit', 'roster'].includes(cmd)) { process.stdout.write(HELP); process.exit(cmd ? 1 : 0); }
+  if (args.help || !cmd || !['audit', 'roster', 'doctor'].includes(cmd)) { process.stdout.write(HELP); process.exit(cmd ? 1 : 0); }
 
   const home = homedir();
   const roster = await readRoster(nodeFs, { home, cwd: process.cwd() });
@@ -94,6 +120,7 @@ async function main() {
   const key = args.key ?? process.env.TYPESAFE_API_KEY ?? process.env.TYPESAFE_KEY;
   const projectsDir = resolve(args.dir ?? join(home, '.claude', 'projects'));
   const outDir = resolve(args.out ?? 'skill-audit');
+  if (cmd === 'doctor') return doctor(args, { key, roster, outDir });
   const options = {
     model: args.model ?? DEFAULTS.model,
     timeoutMs: 20000,

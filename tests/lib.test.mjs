@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { parseFrontmatter, parseListing, readRoster, sameSkill } from '../lib/roster.js';
 import { CHUNK, NONE, buildRank, buildVerify, readRank, suggest } from '../lib/scout.js';
 import { turns } from '../lib/transcripts.js';
+import { buildScore, gather, score } from '../lib/doctor.js';
 
 test('frontmatter: folded description joins into one line', () => {
   const { fields, body } = parseFrontmatter('---\nname: x\ndescription: >\n  Line one\n  line two\n---\n# Body\ntext');
@@ -139,6 +140,34 @@ test('transcripts: the session roster and the mod line come from attachment reco
   assert.equal(out[1].suggested, 'c');
   assert.equal(out[1].text, 'second prompt long enough', 'the mod line is not part of the prompt');
   assert.deepEqual(out[1].loadedNow, ['c'], 'a slash command counts as a load when the session listing knows the skill');
+});
+
+test('doctor: groups prompts by what happened and scores each description in one request', async () => {
+  const cases = [
+    { text: 'build the landing page', category: 'hit', suggestion: 'fd', loadedNow: ['fd'], fit: 0.9 },
+    { text: 'restyle the dashboard', category: 'unsuggested-load', suggestion: null, loadedNow: ['p:fd'], fit: null },
+    { text: 'make the hero pop', category: 'miss', suggestion: 'fd', loadedNow: [], fit: 0.6 },
+    { text: 'write the launch post', category: 'disagree', suggestion: 'fd', loadedNow: ['writer'], fit: 0.4 },
+    { text: 'ok', category: 'trivial', loadedNow: [] },
+  ];
+  const g = gather(cases, 'fd');
+  assert.deepEqual([g.loaded.length, g.missed.length, g.suspect.length], [2, 1, 1]);
+  const body = buildScore('desc', [...g.loaded, ...g.missed, ...g.suspect], 'jev-latest');
+  assert.equal(Object.keys(body.questions).length, 4);
+  assert.equal(body.state.prompts[3].text, 'write the launch post');
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    const b = JSON.parse(init.body);
+    calls.push(b.state.description);
+    const answers = {};
+    Object.keys(b.questions).forEach((k, i) => { answers[k] = { noul: b.state.description === 'better' ? [0.9, 0.9, 0.8, 0.1][i] : [0.5, 0.5, 0.5, 0.5][i] }; });
+    return { ok: true, status: 200, text: JSON.stringify({ answers, usage: { input_tokens: 7 } }) };
+  };
+  const r = await score({ fetchImpl, key: 'k', descriptions: [['current', 'old'], ['rewrite', 'better']], groups: g });
+  assert.deepEqual(calls, ['old', 'better']);
+  assert.equal(r.results[1].loaded, 0.9);
+  assert.equal(r.results[1].missed, 0.8);
+  assert.equal(r.results[1].suspect, 0.1);
 });
 
 test('transcripts: turns, loads, slash commands, duplicates and notifications', async () => {
