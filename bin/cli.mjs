@@ -10,7 +10,8 @@ import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { Agent, request } from 'node:https';
 
-import { readRoster, sameSkill } from '../lib/roster.js';
+import { readCodexRoster, readRoster, sameSkill } from '../lib/roster.js';
+import { codexTurns, hookEntry, hookOutput, listCodexSessions } from '../lib/codex.js';
 import { DEFAULTS, NONE, decide, suggest } from '../lib/scout.js';
 import { listSessions, turns } from '../lib/transcripts.js';
 import { html, summarize, terminal } from '../lib/report.js';
@@ -34,8 +35,14 @@ and reports the turns where a skill should have loaded and did not.
   --dry-run          count prompts and estimate cost; no requests
   --yes              skip the cost confirmation
   --no-cache         ignore cached judgments from earlier runs
+  --codex            audit Codex CLI instead: ~/.codex/sessions and ~/.codex/skills
 
-jev-skill-scout roster       list the skills the audit would rank
+jev-skill-scout roster [--codex]   list the skills the audit would rank
+
+jev-skill-scout hook codex [--install] [--timeout ms]
+  The Codex UserPromptSubmit hook: reads the prompt from stdin, runs the same
+  judgment as the Claude Code mod, and prints additionalContext naming one
+  skill, or nothing. --install writes the entry into ~/.codex/hooks.json.
 
 jev-skill-scout doctor <skill> [--desc "a rewritten description"] [--desc-file path]
   Scores the skill's current description, and any rewrite you pass, against
@@ -51,7 +58,7 @@ function parseArgs(argv) {
     const a = argv[i];
     if (!a.startsWith('--')) { o._.push(a); continue; }
     const k = a.slice(2);
-    if (k === 'dry-run' || k === 'yes' || k === 'no-cache' || k === 'help') { o[k] = true; continue; }
+    if (k === 'dry-run' || k === 'yes' || k === 'no-cache' || k === 'help' || k === 'codex' || k === 'install') { o[k] = true; continue; }
     o[k] = argv[++i];
   }
   return o;
@@ -98,6 +105,50 @@ function categorize(t, sug) {
   return loadedNow.length ? 'unsuggested-load' : 'quiet';
 }
 
+async function hook(args, { home }) {
+  if (args._[1] !== 'codex') { console.error('jev-skill-scout hook codex'); process.exit(1); }
+  const timeoutMs = Number(args.timeout ?? 4000);
+  if (args.install) {
+    const path = join(home, '.codex', 'hooks.json');
+    let current = { hooks: {} };
+    if (existsSync(path)) {
+      const raw = await readFile(path, 'utf8');
+      try { current = JSON.parse(raw); } catch { console.error(`${path} is not valid JSON; fix it first.`); process.exit(1); }
+      await writeFile(`${path}.bak-${Date.now()}`, raw);
+    }
+    current.hooks ??= {};
+    const list = (current.hooks.UserPromptSubmit ??= []);
+    const command = `"${process.execPath}" "${resolve(new URL(import.meta.url).pathname)}" hook codex`;
+    const mine = list.find(g => (g.hooks ?? []).some(h => String(h.command).includes('jev-skill-scout hook codex') || String(h.command).includes('hook codex')));
+    if (mine) mine.hooks = [hookEntry(command, timeoutMs + 1000)];
+    else list.push({ hooks: [hookEntry(command, timeoutMs + 1000)] });
+    await writeFile(path, JSON.stringify(current, null, 2) + '\n');
+    process.stdout.write(`Wrote ${path}. Codex asks you to trust a new hook the first time it runs; the entry is:\n${JSON.stringify(hookEntry(command, timeoutMs + 1000), null, 2)}\n`);
+    return;
+  }
+  const quiet = () => process.exit(0);
+  let input = '';
+  for await (const chunk of process.stdin) input += chunk;
+  let req;
+  try { req = JSON.parse(input); } catch { return quiet(); }
+  const prompt = String(req.prompt ?? '');
+  if (prompt.length < DEFAULTS.minPromptChars || prompt.startsWith('/')) return quiet();
+  const key = process.env.TYPESAFE_API_KEY ?? process.env.TYPESAFE_KEY;
+  if (!key) return quiet();
+  const roster = await readCodexRoster(nodeFs, { home });
+  if (!roster.length) return quiet();
+  try {
+    const r = await Promise.race([
+      suggest({ fetchImpl, key, roster, request: prompt, options: { timeoutMs } }),
+      new Promise(res => setTimeout(() => res(null), timeoutMs)),
+    ]);
+    if (r?.suggestion) process.stdout.write(hookOutput(r.suggestion) + '\n');
+  } catch (e) {
+    process.stderr.write(`jev-skill-scout: off for this turn (${String(e.message ?? e).slice(0, 120)})\n`);
+  }
+  process.exit(0);
+}
+
 async function doctor(args, { key, roster, outDir }) {
   const skill = args._[1];
   if (!skill) { console.error('Which skill? jev-skill-scout doctor <skill>'); process.exit(1); }
@@ -119,20 +170,22 @@ async function doctor(args, { key, roster, outDir }) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const cmd = args._[0];
-  if (args.help || !cmd || !['audit', 'roster', 'doctor'].includes(cmd)) { process.stdout.write(HELP); process.exit(cmd ? 1 : 0); }
+  if (args.help || !cmd || !['audit', 'roster', 'doctor', 'hook'].includes(cmd)) { process.stdout.write(HELP); process.exit(cmd ? 1 : 0); }
 
   const home = homedir();
-  const roster = await readRoster(nodeFs, { home, cwd: process.cwd() });
+  if (cmd === 'hook') return hook(args, { home });
+  const codex = Boolean(args.codex);
+  const roster = codex ? await readCodexRoster(nodeFs, { home }) : await readRoster(nodeFs, { home, cwd: process.cwd() });
   if (cmd === 'roster') {
     for (const s of roster) process.stdout.write(`${s.name.padEnd(44)} ${s.source.padEnd(28)} ${s.description.slice(0, 80)}\n`);
     process.stdout.write(`\n${roster.length} skills\n`);
     return;
   }
-  if (!roster.length) { console.error('No SKILL.md files found under ~/.claude/skills, ~/.claude/plugins/cache or ./.claude/skills.'); process.exit(1); }
+  if (!roster.length) { console.error(codex ? 'No SKILL.md files found under ~/.codex/skills.' : 'No SKILL.md files found under ~/.claude/skills, ~/.claude/plugins/cache or ./.claude/skills.'); process.exit(1); }
 
   const key = args.key ?? process.env.TYPESAFE_API_KEY ?? process.env.TYPESAFE_KEY;
-  const projectsDir = resolve(args.dir ?? join(home, '.claude', 'projects'));
-  const outDir = resolve(args.out ?? 'skill-audit');
+  const projectsDir = resolve(args.dir ?? join(home, codex ? '.codex' : '.claude', codex ? 'sessions' : 'projects'));
+  const outDir = resolve(args.out ?? (codex ? 'skill-audit-codex' : 'skill-audit'));
   if (cmd === 'doctor') return doctor(args, { key, roster, outDir });
   const options = {
     model: args.model ?? DEFAULTS.model,
@@ -145,13 +198,19 @@ async function main() {
   const limit = args.limit ? Number(args.limit) : Infinity;
   const concurrency = Math.max(1, Number(args.concurrency ?? 8));
 
-  let sessions = await listSessions(projectsDir, { sinceMs });
-  if (args.project) sessions = sessions.filter(s => s.project.includes(args.project));
+  let sessions = codex ? await listCodexSessions(projectsDir, { sinceMs }) : await listSessions(projectsDir, { sinceMs });
+  if (args.project && !codex) sessions = sessions.filter(s => s.project.includes(args.project));
   if (!sessions.length) { console.error(`No transcripts found under ${projectsDir}.`); process.exit(1); }
 
   const all = [];
   const isSkill = name => roster.some(r => sameSkill(r.name, name));
-  for (const s of sessions) for await (const t of turns(s, { isSkill })) all.push(t);
+  const read = codex ? codexTurns : turns;
+  for (const s of sessions) {
+    const mine = [];
+    for await (const t of read(s, { isSkill })) mine.push(t);
+    if (args.project && codex && !s.project.includes(args.project)) continue;
+    all.push(...mine);
+  }
 
   // Judge each prompt against the list its own session showed the model, with
   // today's SKILL.md bodies for the verify stage where the skill still exists.
@@ -249,7 +308,7 @@ async function main() {
 
   const s = summarize(cases);
   const meta = {
-    projectsDir, sessions: sessions.length, model: options.model, date: new Date().toISOString().slice(0, 10),
+    projectsDir, sessions: sessions.length, model: options.model, date: new Date().toISOString().slice(0, 10), agent: codex ? 'Codex' : 'Claude Code',
     gateThreshold: options.gateThreshold, fitsThreshold: options.fitsThreshold, shortlist: DEFAULTS.shortlist, minPromptChars: DEFAULTS.minPromptChars,
   };
   await writeFile(join(outDir, 'cases.json'), JSON.stringify({ meta, summary: s, cases }, null, 1));

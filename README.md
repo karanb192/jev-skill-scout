@@ -9,7 +9,7 @@ This repo does two things about that.
 1. **The audit.** `npx jev-skill-scout audit` replays every prompt in your Claude Code transcripts through [TypeSafe's Jev](https://docs.typesafe.ai/introduction) and counts the turns where a skill should have loaded and did not. Each prompt is judged against the skill list its own session showed the model, which the transcript records. One command, one key, one HTML report you can label.
 2. **The mod.** A Claude Code [function-hook plugin](https://github.com/anthropics/claude-code/tree/main/mods) that runs the same judgment live, before each prompt reaches the model, and attaches one line: `Relevant to this request: frontend-design.` The model still decides. Your skill list does not change, so prompt caching over it still holds.
 
-Both use the same code in `lib/`. The audit is the mod's brain run offline, so its numbers are what the mod would have done on your history. Once the mod is on, the audit also reads its trace in later transcripts and reports whether the agent followed each suggestion, and the miss rate with the mod against without.
+Both use the same code in `lib/`. The audit is the mod's brain run offline, so its numbers are what the mod would have done on your history. Both also work for Codex CLI: `--codex` audits its sessions, and `hook codex` is the same judgment as a Codex `UserPromptSubmit` hook (see below). Once the mod is on, the audit also reads its trace in later transcripts and reports whether the agent followed each suggestion, and the miss rate with the mod against without.
 
 ## What the audit found on my transcripts
 
@@ -113,6 +113,25 @@ Every option (key, thresholds, timeout, model, quiet, shadow, on/off) is a plugi
 **Shadow mode** judges every prompt and shows the pick in the status line but attaches nothing, so you can watch what it would do before letting it. Turn it on under `/config`, or for one session with `JEV_SKILL_SCOUT_SHADOW=1`.
 
 Per prompt it adds one status line and, from India, about 2 to 3 seconds before the model starts (two round trips to a West Coast API). From the US it is well under a second. Set `timeoutMs` lower if that bothers you; on timeout the turn runs untouched.
+
+### Codex too
+
+Codex CLI keeps its transcripts in `~/.codex/sessions` and shows the model a skill list in every session, so the audit reads them the same way:
+
+```sh
+npx jev-skill-scout audit --codex     # ~/.codex/sessions, skills from ~/.codex/skills, ~/.agents/skills and plugin caches
+```
+
+Codex has no Skill tool; a load is a shell command that reads the skill's `SKILL.md`, which the audit matches against the paths in the session's own listing. On my 90 Codex sessions: 766 prompts, 743 judged against the list their session showed the model, 190 turns where Jev saw a skill need, 34 missed (17.9%), 131 already loaded. Codex reads several skills up front far more often than Claude Code does, which is most of the gap between 18% and 73%. Two requests came back as a 403 page from the API's edge and are counted as errors, not misses. $0.12, 733 ms per prompt.
+
+For the live half, Codex 0.155 has a native `UserPromptSubmit` hook that accepts `additionalContext`, so the mod's line arrives through a classic hook instead:
+
+```sh
+npm i -g jev-skill-scout
+jev-skill-scout hook codex --install   # writes the entry into ~/.codex/hooks.json, backs up the old file
+```
+
+Codex asks you to trust the new hook the first time it runs. Per prompt the hook reads the prompt from stdin, ranks the Codex skills on disk, and prints one JSON line naming a skill or nothing at all; about a second from India including Node startup, never blocks, and on any failure it stays silent. The audit looks for the same line in Codex transcripts to fill the obedience column; I have not yet watched a Codex session record it, so treat that column as unverified on Codex until it fills.
 
 ### What it can reach
 
