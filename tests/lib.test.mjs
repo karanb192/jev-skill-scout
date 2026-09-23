@@ -8,6 +8,7 @@ import { parseFrontmatter, parseListing, readRoster, sameSkill } from '../lib/ro
 import { CHUNK, NONE, buildRank, buildVerify, readRank, suggest } from '../lib/scout.js';
 import { turns } from '../lib/transcripts.js';
 import { buildScore, gather, score } from '../lib/doctor.js';
+import { codexTurns, hookOutput, parseSkillsInstructions } from '../lib/codex.js';
 
 test('frontmatter: folded description joins into one line', () => {
   const { fields, body } = parseFrontmatter('---\nname: x\ndescription: >\n  Line one\n  line two\n---\n# Body\ntext');
@@ -168,6 +169,59 @@ test('doctor: groups prompts by what happened and scores each description in one
   assert.equal(r.results[1].loaded, 0.9);
   assert.equal(r.results[1].missed, 0.8);
   assert.equal(r.results[1].suspect, 0.1);
+});
+
+test('codex: both listing formats parse to names, descriptions and absolute paths', () => {
+  const newer = '<skills_instructions>\n### Skill roots\n- `r0` = `/h/.codex/skills`\n- `r2` = `/h/.codex/skills/.system`\n### Available skills\n- blog-review: Review a draft as a reader. (file: r0/blog-review/SKILL.md)\n- imagegen: Make images\n  when asked. (file: r2/imagegen/SKILL.md)\n</skills_instructions>';
+  const r = parseSkillsInstructions(newer);
+  assert.deepEqual(r.skills.map(s => [s.name, s.description, s.path]), [
+    ['blog-review', 'Review a draft as a reader.', '/h/.codex/skills/blog-review/SKILL.md'],
+    ['imagegen', 'Make images when asked.', '/h/.codex/skills/.system/imagegen/SKILL.md'],
+  ]);
+  const older = '<skills_instructions>\n### Available skills\n- openai-docs: Official docs. (file: /h/.codex/skills/.system/openai-docs/SKILL.md)\n';
+  assert.deepEqual(parseSkillsInstructions(older).skills.map(s => s.path), ['/h/.codex/skills/.system/openai-docs/SKILL.md']);
+});
+
+test('codex: turns come from user messages, loads from SKILL.md reads, roster from the listing', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'scout-codex-'));
+  const rec = (type, payload) => JSON.stringify({ timestamp: '2026-09-23T00:00:00Z', type, payload });
+  const msg = (role, text, id = Math.random().toString(36).slice(2)) => rec('response_item', { type: 'message', id, role, content: [{ type: role === 'assistant' ? 'output_text' : 'input_text', text }] });
+  const lines = [
+    rec('session_meta', { id: 's1', cwd: '/w/proj', originator: 'codex-tui' }),
+    msg('developer', '<skills_instructions>\n### Skill roots\n- `r0` = `/h/.codex/skills`\n### Available skills\n- blog-review: Review. (file: r0/blog-review/SKILL.md)\n- humanizer-ish: Voice. (file: r0/humanizer-ish/SKILL.md)\n</skills_instructions>'),
+    msg('user', '<environment_context>\n<cwd>/w/proj</cwd>\n</environment_context>'),
+    msg('user', '# AGENTS.md instructions\nlots'),
+    msg('user', 'review my draft post as a cold reader please'),
+    rec('response_item', { type: 'custom_tool_call', name: 'exec', input: 'const r = await tools.exec_command({cmd:"cat /h/.codex/skills/blog-review/SKILL.md"})' }),
+    msg('assistant', 'Reading the skill, then the draft.'),
+    msg('user', 'now make it sound like me <skill_relevance>\nRelevant to this request: humanizer-ish. Load it.\n</skill_relevance>'),
+    rec('response_item', { type: 'function_call', name: 'shell', arguments: '{"command":["sed","-n","1,200p","/h/.codex/skills/humanizer-ish/SKILL.md"]}' }),
+    msg('user', 'now make it sound like me'),
+  ];
+  const p = join(dir, 'rollout.jsonl');
+  await writeFile(p, lines.join('\n') + '\n');
+  const out = [];
+  for await (const t of codexTurns({ path: p, project: '', session: 'rollout' }, { isSkill: () => false })) out.push(t);
+  assert.deepEqual(out.map(t => t.text), ['review my draft post as a cold reader please', 'now make it sound like me']);
+  assert.deepEqual(out[0].roster.map(s => s.name), ['blog-review', 'humanizer-ish']);
+  assert.deepEqual(out[0].loadedNow, ['blog-review']);
+  assert.equal(out[0].recent, '');
+  assert.equal(out[1].suggested, 'humanizer-ish');
+  assert.deepEqual(out[1].loadedBefore, ['blog-review']);
+  assert.deepEqual(out[1].loadedNow, ['humanizer-ish']);
+  assert.equal(out[1].project, '-w-proj');
+
+  const sub = join(dir, 'sub.jsonl');
+  await writeFile(sub, [rec('session_meta', { id: 's2', cwd: '/w', source: { subagent: { thread_spawn: {} } } }), msg('user', 'a subagent prompt long enough')].join('\n') + '\n');
+  const subOut = [];
+  for await (const t of codexTurns({ path: sub, project: '', session: 'sub' })) subOut.push(t);
+  assert.equal(subOut.length, 0, 'subagent threads are skipped');
+});
+
+test('codex: the hook prints the wire Codex expects', () => {
+  const o = JSON.parse(hookOutput('blog-review'));
+  assert.equal(o.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
+  assert.match(o.hookSpecificOutput.additionalContext, /Relevant to this request: blog-review\./);
 });
 
 test('transcripts: turns, loads, slash commands, duplicates and notifications', async () => {
