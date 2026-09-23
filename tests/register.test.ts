@@ -1,21 +1,22 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import type { PromptSubmitInput, SessionStartInput } from 'claude-code'
+import type { On, PromptSubmitInput, SessionStartInput } from 'claude-code'
+
 
 const session: SessionStartInput = { surface: 'terminal', isInteractive: true, cwd: '/work' }
 const prompt = (text: string): PromptSubmitInput => ({ text, wait: false, origin: { kind: 'composer' } })
 
 const SKILL = '---\nname: frontend-design\ndescription: Build polished web screens that follow the design system.\n---\nRead the design tokens first.'
 
-function world(on: Parameters<Parameters<typeof test>[1]>[1], fetchBodies: string[], answers: object[]) {
+function world(on: On, fetchBodies: string[], answers: object[], env: Record<string, string> = { HOME: '/h', TYPESAFE_API_KEY: 'k' }, status: string[] = []) {
   mock.store(on, {})
-  mock.env(on, { HOME: '/h', TYPESAFE_API_KEY: 'k' })
+  mock.env(on, env)
   on('session.cwd', () => ({ value: '/work' }))
   on('fs.list', ($, e) => ({ value: e.path === '/h/.claude/skills' ? [{ name: 'frontend-design', kind: 'dir', size: 0, isLink: false }] : [] }))
   on('fs.exists', ($, e) => ({ value: e.path === '/h/.claude/skills/frontend-design/SKILL.md' }))
   on('fs.read', () => ({ value: SKILL }))
   mock.clock(on)
   on('ui.log', () => ({ value: undefined }))
-  on('ui.status', () => ({ value: undefined }))
+  on('ui.status', ($, e) => { status.push(String(e.text ?? '')); return { value: undefined } })
   on('http.fetch', ($, e) => {
     fetchBodies.push(String(e.init?.body ?? ''))
     const body = answers.shift() ?? {}
@@ -41,6 +42,22 @@ describe('jev-skill-scout', () => {
     expect(bodies.length).toBe(2)
     expect(JSON.parse(bodies[0]!).questions.which.criteria).toHaveProperty('frontend-design')
     expect(entered!.context?.[0]).toContain('Relevant to this request: frontend-design')
+  })
+
+  // The kit cannot hand options to the plugin under test; the env switch is the same path.
+  test('shadow mode judges and reports but attaches nothing', async ($, on) => {
+    const bodies: string[] = []
+    const status: string[] = []
+    world(on, bodies, [rankYes, verifyYes], { HOME: '/h', TYPESAFE_API_KEY: 'k', JEV_SKILL_SCOUT_SHADOW: '1' }, status)
+    let entered: PromptSubmitInput | null = null
+    on('prompt.submit', ($, e) => { entered = e; return { text: e.text } })
+
+    await $.session.start(session)
+    await $.prompt.submit(prompt('make this reddit reply sound like me'))
+
+    expect(bodies.length).toBe(2)
+    expect(entered!.context ?? []).toEqual([])
+    expect(status.some(s => s.includes('shadow') && s.includes('frontend-design'))).toBe(true)
   })
 
   test('leaves the prompt alone when the gate says no skill is needed', async ($, on) => {

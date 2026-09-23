@@ -8,11 +8,13 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
+import { Agent, request } from 'node:https';
 
 import { readRoster, sameSkill } from '../lib/roster.js';
 import { DEFAULTS, NONE, decide, suggest } from '../lib/scout.js';
 import { listSessions, turns } from '../lib/transcripts.js';
 import { html, summarize, terminal } from '../lib/report.js';
+import { gather, render, score } from '../lib/doctor.js';
 
 const HELP = `jev-skill-scout audit [options]
 
@@ -34,7 +36,14 @@ and reports the turns where a skill should have loaded and did not.
   --no-cache         ignore cached judgments from earlier runs
 
 jev-skill-scout roster       list the skills the audit would rank
+
+jev-skill-scout doctor <skill> [--desc "a rewritten description"] [--desc-file path]
+  Scores the skill's current description, and any rewrite you pass, against
+  the real prompts in the last audit: the ones that loaded it, the ones Jev
+  missed, and the ones where the turn chose another skill. One request each.
+  --out <dir>   the audit directory holding cases.json (default ./skill-audit)
 `;
+
 
 function parseArgs(argv) {
   const o = { _: [] };
@@ -54,9 +63,21 @@ const nodeFs = {
   exists: async p => { try { await stat(p); return true; } catch { return false; } },
 };
 
-async function fetchImpl(url, init) {
-  const r = await fetch(url, init);
-  return { ok: r.ok, status: r.status, text: await r.text() };
+// HTTP/1.1 on purpose: Node's fetch negotiates h2 with the API and the session
+// wedged the event loop after about 200 requests in every long run, which no
+// timeout can interrupt. One keep-alive agent, one socket per worker.
+const agent = new Agent({ keepAlive: true, maxSockets: 32 });
+function fetchImpl(url, init) {
+  return new Promise((resolve, reject) => {
+    const req = request(url, { method: init.method, headers: init.headers, agent, signal: init.signal }, res => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, text: Buffer.concat(chunks).toString('utf8') }));
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.end(init.body);
+  });
 }
 
 function ask(question) {
@@ -77,10 +98,28 @@ function categorize(t, sug) {
   return loadedNow.length ? 'unsuggested-load' : 'quiet';
 }
 
+async function doctor(args, { key, roster, outDir }) {
+  const skill = args._[1];
+  if (!skill) { console.error('Which skill? jev-skill-scout doctor <skill>'); process.exit(1); }
+  const current = roster.find(r => sameSkill(r.name, skill));
+  if (!current) { console.error(`No installed skill named ${skill}. Try: jev-skill-scout roster`); process.exit(1); }
+  const casesPath = join(outDir, 'cases.json');
+  if (!existsSync(casesPath)) { console.error(`No audit at ${casesPath}. Run: jev-skill-scout audit`); process.exit(1); }
+  if (!key) { console.error('No TypeSafe key. Set TYPESAFE_API_KEY or pass --key.'); process.exit(1); }
+  const { cases } = JSON.parse(await readFile(casesPath, 'utf8'));
+  const groups = gather(cases, current.name);
+  if (!groups.loaded.length && !groups.missed.length && !groups.suspect.length) { console.error(`The audit has no prompts involving ${current.name}.`); process.exit(1); }
+  const descriptions = [['current', current.description]];
+  if (args.desc) descriptions.push(['rewrite', String(args.desc)]);
+  if (args['desc-file']) descriptions.push(['rewrite', (await readFile(resolve(args['desc-file']), 'utf8')).trim()]);
+  const scored = await score({ fetchImpl, key, descriptions, groups, model: args.model ?? DEFAULTS.model });
+  process.stdout.write(render(current.name, groups, scored) + '\n\n');
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const cmd = args._[0];
-  if (args.help || !cmd || !['audit', 'roster'].includes(cmd)) { process.stdout.write(HELP); process.exit(cmd ? 1 : 0); }
+  if (args.help || !cmd || !['audit', 'roster', 'doctor'].includes(cmd)) { process.stdout.write(HELP); process.exit(cmd ? 1 : 0); }
 
   const home = homedir();
   const roster = await readRoster(nodeFs, { home, cwd: process.cwd() });
@@ -94,6 +133,7 @@ async function main() {
   const key = args.key ?? process.env.TYPESAFE_API_KEY ?? process.env.TYPESAFE_KEY;
   const projectsDir = resolve(args.dir ?? join(home, '.claude', 'projects'));
   const outDir = resolve(args.out ?? 'skill-audit');
+  if (cmd === 'doctor') return doctor(args, { key, roster, outDir });
   const options = {
     model: args.model ?? DEFAULTS.model,
     timeoutMs: 20000,
@@ -112,13 +152,30 @@ async function main() {
   const all = [];
   const isSkill = name => roster.some(r => sameSkill(r.name, name));
   for (const s of sessions) for await (const t of turns(s, { isSkill })) all.push(t);
+
+  // Judge each prompt against the list its own session showed the model, with
+  // today's SKILL.md bodies for the verify stage where the skill still exists.
+  const built = new Map();
+  const rosterFor = t => {
+    if (!t.roster) return { list: roster, hash: null };
+    let b = built.get(t.roster);
+    if (!b) {
+      const list = t.roster.map(s => {
+        const disk = roster.find(r => sameSkill(r.name, s.name));
+        return { name: s.name, description: s.description, excerpt: disk?.excerpt ?? '' };
+      });
+      b = { list, hash: createHash('sha1').update(JSON.stringify(list.map(s => [s.name, s.description, s.excerpt]))).digest('hex').slice(0, 10) };
+      built.set(t.roster, b);
+    }
+    return b;
+  };
   const judgeable = all.filter(t => t.text.length >= DEFAULTS.minPromptChars);
   const rosterChars = roster.reduce((n, s) => n + Math.min(s.description.length, DEFAULTS.descriptionChars) + s.name.length + 4, 0);
   const estTokens = judgeable.reduce((n, t) => n + (rosterChars + Math.min(t.text.length, 4000) + 400) / 4, 0);
   const estCost = (estTokens * 1.6) / 1e6 * 0.042; // the second call runs on some turns
 
   console.error(`${sessions.length} sessions, ${all.length} human prompts, ${judgeable.length} long enough to judge, ${roster.length} skills.`);
-  console.error(`Estimated ${Math.round(estTokens).toLocaleString()} input tokens for call 1, about $${estCost.toFixed(2)} in all.`);
+  console.error(`Estimated ${Math.round(estTokens).toLocaleString('en-US')} input tokens for call 1, about $${estCost.toFixed(2)} in all.`);
   if (args['dry-run']) return;
   if (!key) { console.error('No TypeSafe key. Set TYPESAFE_API_KEY or pass --key. Keys: https://console.typesafe.ai/settings/keys'); process.exit(1); }
   if (!args.yes) {
@@ -140,15 +197,22 @@ async function main() {
     while (queue.length) {
       const t = queue.shift();
       const id = createHash('sha1').update(`${t.session}:${t.uuid ?? t.timestamp}`).digest('hex').slice(0, 12);
-      const base = { id, project: t.project, session: t.session, timestamp: t.timestamp, text: t.text, recent: t.recent, loadedBefore: t.loadedBefore, loadedNow: t.loadedNow };
+      const base = {
+        id, project: t.project, session: t.session, timestamp: t.timestamp, text: t.text, recent: t.recent,
+        loadedBefore: t.loadedBefore, loadedNow: t.loadedNow,
+        suggested: t.suggested ?? null,
+        followed: Boolean(t.suggested && t.loadedNow.some(n => sameSkill(n, t.suggested))),
+        rosterSize: t.roster ? t.roster.length : 0,
+      };
       if (t.text.length < DEFAULTS.minPromptChars) { cases.push({ ...base, category: 'trivial' }); continue; }
       if (judged >= limit) { continue; }
       judged++;
-      const ck = `${id}:${rosterHash}:${options.model}`;
+      const { list: turnRoster, hash: turnHash } = rosterFor(t);
+      const ck = `${id}:${turnHash ?? rosterHash}:${options.model}`;
       let res = cache[ck];
       if (!res) {
         try {
-          res = await suggest({ fetchImpl, key, roster, request: t.text, recent: t.recent, options });
+          res = await suggest({ fetchImpl, key, roster: turnRoster, request: t.text, recent: t.recent, options });
           cache[ck] = res;
         } catch (e) {
           failed++;

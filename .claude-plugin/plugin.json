@@ -48,6 +48,12 @@
       "title": "Quiet",
       "description": "Hide the status line with the pick and the milliseconds.",
       "default": false
+    },
+    "shadow": {
+      "type": "boolean",
+      "title": "Shadow mode",
+      "description": "Judge every prompt and show the pick in the status line, but attach nothing. For seeing what it would do before letting it. JEV_SKILL_SCOUT_SHADOW=1 in the environment does the same for one session.",
+      "default": false
     }
   }
 }

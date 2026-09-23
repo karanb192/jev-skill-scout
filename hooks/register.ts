@@ -18,6 +18,7 @@ type Options = {
   timeoutMs?: number
   model?: string
   quiet?: boolean
+  shadow?: boolean
 }
 
 const ROSTER_KEY = 'roster.v1'
@@ -94,6 +95,11 @@ export const register: Register = (on, options) => {
       return next(e)
     }
     const fit = result.verify?.fits?.[result.suggestion] ?? 0
+    const shadow = opt.shadow || (await $.env.get('JEV_SKILL_SCOUT_SHADOW')) === '1'
+    if (shadow) {
+      $.ui.status(`jev-skill-scout (shadow): would suggest ${result.suggestion} (fit ${fit.toFixed(2)}, ${ms} ms)`)
+      return next(e)
+    }
     if (!opt.quiet) $.ui.status(`jev-skill-scout: ${result.suggestion} (fit ${fit.toFixed(2)}, ${ms} ms)`)
     return next({ ...e, context: [...(e.context ?? []), contextLine(result.suggestion)] })
   }).catch(($, e, next) => {

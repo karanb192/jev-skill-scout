@@ -4,9 +4,10 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { parseFrontmatter, readRoster, sameSkill } from '../lib/roster.js';
-import { NONE, buildRank, buildVerify, readRank, suggest } from '../lib/scout.js';
+import { parseFrontmatter, parseListing, readRoster, sameSkill } from '../lib/roster.js';
+import { CHUNK, NONE, buildRank, buildVerify, readRank, suggest } from '../lib/scout.js';
 import { turns } from '../lib/transcripts.js';
+import { buildScore, gather, score } from '../lib/doctor.js';
 
 test('frontmatter: folded description joins into one line', () => {
   const { fields, body } = parseFrontmatter('---\nname: x\ndescription: >\n  Line one\n  line two\n---\n# Body\ntext');
@@ -15,18 +16,23 @@ test('frontmatter: folded description joins into one line', () => {
   assert.match(body, /^# Body/);
 });
 
-test('roster: reads user, project and newest plugin version, dedupes by name', async () => {
+test('roster: reads user, project and newest enabled plugin version, dedupes by name', async () => {
   const files = {
     '/h/.claude/skills/a/SKILL.md': '---\nname: a\ndescription: does a\n---\nA body',
     '/h/.claude/skills/nodesc/SKILL.md': '---\nname: nodesc\n---\n',
     '/w/.claude/skills/a/SKILL.md': '---\nname: a\ndescription: project a\n---\n',
     '/h/.claude/plugins/cache/m/p/1.9.0/skills/s/SKILL.md': '---\nname: s\ndescription: old\n---\n',
     '/h/.claude/plugins/cache/m/p/1.10.0/skills/s/SKILL.md': '---\nname: s\ndescription: new\n---\n',
+    '/h/.claude/plugins/cache/m/q/1.0.0/skills/t/SKILL.md': '---\nname: t\ndescription: disabled plugin\n---\n',
+    '/h/.claude/plugins/cache/m/r/1.0.0/skills/u/SKILL.md': '---\nname: u\ndescription: never enabled\n---\n',
+    '/h/.claude/settings.json': JSON.stringify({ enabledPlugins: { 'p@m': true, 'q@m': false } }),
   };
   const dirs = {
     '/w/.claude/skills': ['a'], '/h/.claude/skills': ['a', 'nodesc'], '/h/.claude/plugins/cache': ['m'],
-    '/h/.claude/plugins/cache/m': ['p'], '/h/.claude/plugins/cache/m/p': ['1.9.0', '1.10.0'],
+    '/h/.claude/plugins/cache/m': ['p', 'q', 'r'], '/h/.claude/plugins/cache/m/p': ['1.9.0', '1.10.0'],
+    '/h/.claude/plugins/cache/m/q': ['1.0.0'], '/h/.claude/plugins/cache/m/r': ['1.0.0'],
     '/h/.claude/plugins/cache/m/p/1.10.0/skills': ['s'], '/h/.claude/plugins/cache/m/p/1.9.0/skills': ['s'],
+    '/h/.claude/plugins/cache/m/q/1.0.0/skills': ['t'], '/h/.claude/plugins/cache/m/r/1.0.0/skills': ['u'],
   };
   const fs = {
     list: async p => (dirs[p] ?? []).map(name => ({ name, kind: 'dir' })),
@@ -83,6 +89,85 @@ test('verify request exposes instructions, not just names', () => {
   const body = buildVerify([{ name: 'a', description: 'd', excerpt: 'Step one: read the file.' }], 'req', '');
   assert.match(body.questions.which.criteria.a, /Step one/);
   assert.equal(body.questions.fits_0.type, 'noul');
+});
+
+test('listing: wrapped descriptions and plugin names parse back into a roster', () => {
+  const r = parseListing('- a: does a\n  and more of a\n- p:s: plugin skill\n- b: does b');
+  assert.deepEqual(r, [{ name: 'a', description: 'does a and more of a' }, { name: 'p:s', description: 'plugin skill' }, { name: 'b', description: 'does b' }]);
+});
+
+test('suggest: a roster past the Choice cap is ranked in chunks, then verified once', async () => {
+  const roster = Array.from({ length: CHUNK + 5 }, (_, i) => ({ name: `s${i}`, description: `skill ${i}`, excerpt: 'x' }));
+  const sizes = [];
+  const fetchImpl = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (body.state.candidates) {
+      return { ok: true, status: 200, text: JSON.stringify({ answers: { which: { choice: body.state.candidates[0].name, probabilities: {} }, fits_0: { noul: 0.9 } }, usage: {} }) };
+    }
+    const names = Object.keys(body.questions.which.criteria);
+    sizes.push(names.length);
+    const first = names[0];
+    return { ok: true, status: 200, text: JSON.stringify({ answers: { which: { choice: first, probabilities: { [first]: 0.7, [NONE]: 0.3 } }, gate_acts: { noul: 0.9 }, gate_procedure: { noul: 0.9 }, gate_prose: { noul: 0.1 } }, usage: { input_tokens: 5 } }) };
+  };
+  const r = await suggest({ fetchImpl, key: 'k', roster, request: 'a request long enough to judge' });
+  assert.deepEqual(sizes, [CHUNK + 1, 6], 'two rank calls, each with its own none option');
+  assert.equal(r.usage.calls, 3);
+  assert.equal(r.usage.input, 10);
+  assert.ok(['s0', `s${CHUNK}`].includes(r.suggestion));
+});
+
+test('transcripts: the session roster and the mod line come from attachment records', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'scout-'));
+  const rec = o => JSON.stringify({ uuid: Math.random().toString(36).slice(2), timestamp: '2026-09-21T00:00:00Z', ...o });
+  const lines = [
+    rec({ type: 'attachment', attachment: { type: 'skill_listing', isInitial: true, skillCount: 2, names: ['a', 'b'], content: '- a: does a\n- b: does b' } }),
+    rec({ type: 'user', message: { role: 'user', content: 'first prompt long enough' } }),
+    rec({ type: 'attachment', attachment: { type: 'hook_additional_context', content: ['<skill_relevance>\nRelevant to this request: a. Load it with the Skill tool before answering. Ignore this if it does not fit what the user actually asked for.\n</skill_relevance>'] } }),
+    rec({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Skill', input: { skill: 'a' } }] } }),
+    rec({ type: 'attachment', attachment: { type: 'skill_listing', isInitial: false, skillCount: 1, names: ['c'], content: '- c: does c' } }),
+    rec({ type: 'user', message: { role: 'user', content: 'second prompt long enough <skill_relevance>\nRelevant to this request: c.\n</skill_relevance>' } }),
+    rec({ type: 'user', message: { role: 'user', content: '<command-name>/c</command-name>' } }),
+  ];
+  const p = join(dir, 's.jsonl');
+  await writeFile(p, lines.join('\n') + '\n');
+  const out = [];
+  for await (const t of turns({ path: p, project: 'x', session: 's' }, { isSkill: () => false })) out.push(t);
+  assert.equal(out.length, 2);
+  assert.deepEqual(out[0].roster.map(s => s.name), ['a', 'b']);
+  assert.equal(out[0].suggested, 'a');
+  assert.deepEqual(out[0].loadedNow, ['a']);
+  assert.deepEqual(out[1].roster.map(s => s.name), ['a', 'b', 'c']);
+  assert.equal(out[1].suggested, 'c');
+  assert.equal(out[1].text, 'second prompt long enough', 'the mod line is not part of the prompt');
+  assert.deepEqual(out[1].loadedNow, ['c'], 'a slash command counts as a load when the session listing knows the skill');
+});
+
+test('doctor: groups prompts by what happened and scores each description in one request', async () => {
+  const cases = [
+    { text: 'build the landing page', category: 'hit', suggestion: 'fd', loadedNow: ['fd'], fit: 0.9 },
+    { text: 'restyle the dashboard', category: 'unsuggested-load', suggestion: null, loadedNow: ['p:fd'], fit: null },
+    { text: 'make the hero pop', category: 'miss', suggestion: 'fd', loadedNow: [], fit: 0.6 },
+    { text: 'write the launch post', category: 'disagree', suggestion: 'fd', loadedNow: ['writer'], fit: 0.4 },
+    { text: 'ok', category: 'trivial', loadedNow: [] },
+  ];
+  const g = gather(cases, 'fd');
+  assert.deepEqual([g.loaded.length, g.missed.length, g.suspect.length], [2, 1, 1]);
+  const body = buildScore('desc', [...g.loaded, ...g.missed, ...g.suspect], 'jev-latest');
+  assert.equal(Object.keys(body.questions).length, 4);
+  assert.equal(body.state.prompts[3].text, 'write the launch post');
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    const b = JSON.parse(init.body);
+    calls.push(b.state.description);
+    const answers = {};
+    Object.keys(b.questions).forEach((k, i) => { answers[k] = { noul: b.state.description === 'better' ? [0.9, 0.9, 0.8, 0.1][i] : [0.5, 0.5, 0.5, 0.5][i] }; });
+    return { ok: true, status: 200, text: JSON.stringify({ answers, usage: { input_tokens: 7 } }) };
+  };
+  const r = await score({ fetchImpl, key: 'k', descriptions: [['current', 'old'], ['rewrite', 'better']], groups: g });
+  assert.deepEqual(calls, ['old', 'better']);
+  assert.equal(r.results[1].loaded, 0.9);
+  assert.equal(r.results[1].missed, 0.8);
+  assert.equal(r.results[1].suspect, 0.1);
 });
 
 test('transcripts: turns, loads, slash commands, duplicates and notifications', async () => {
